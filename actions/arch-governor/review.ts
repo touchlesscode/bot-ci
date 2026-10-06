@@ -2,15 +2,17 @@
 /**
  * arch governor — a read-only architecture review of a pull request by a model
  * from a different family than the harness that wrote it. runs as a required
- * github check: posts one review comment (never an approval) and exits 1 when
- * the verdict is "block".
+ * github check: posts one review comment (never an approval). advisory by
+ * default: the check always passes and a "block" verdict or a governor error
+ * is a warning. with ARCH_GOVERNOR_MODE=enforce it exits 1 on either.
  *
  *   node .github/arch-governor/review.ts   (inside the workflow; env below)
  *
  * env: GITHUB_TOKEN, GITHUB_REPOSITORY, GITHUB_EVENT_PATH, ANTHROPIC_API_KEY and/or OPENAI_API_KEY,
  * optional ARCH_GOVERNOR_ANTHROPIC_MODEL, ARCH_GOVERNOR_OPENAI_MODEL, ARCH_GOVERNOR_RULES (the repo's
  * rules file, default .github/arch-governor/rules.md), ARCH_GOVERNOR_DEFAULT_RULES (used when the repo
- * has none), ARCH_GOVERNOR_SCOPE (`bot`, the default, or `all`), ARCH_GOVERNOR_BOT_LOGINS (comma list).
+ * has none), ARCH_GOVERNOR_SCOPE (`bot`, the default, or `all`), ARCH_GOVERNOR_BOT_LOGINS (comma list),
+ * ARCH_GOVERNOR_MODE (`advisory`, the default, or `enforce`).
  */
 import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
@@ -53,13 +55,30 @@ Answer with JSON only: {"verdict":"pass"|"block","summary":"<2-3 sentences>","fi
 Architecture rules:
 ${rules}`
 
+type ModelPayload = { content?: { type?: string; text?: string }[]; stop_reason?: string; choices?: { message?: { content?: string } }[] }
+
+/**
+ * the verdict json out of a model reply. anthropic replies can lead with
+ * thinking blocks, so every text block counts, not just the first; a reply
+ * with none says why (stop reason, block types) instead of failing blind.
+ */
+export const verdictJsonOf = (family: Family, payload: ModelPayload) => {
+  const text = family === "anthropic"
+    ? (payload.content ?? []).filter((block) => (block.type ?? "text") === "text").map((block) => block.text ?? "").join("\n")
+    : payload.choices?.[0]?.message?.content ?? ""
+  const json = /\{[\s\S]*\}/.exec(text)?.[0]
+  if (json) return json
+  const detail = family === "anthropic" ? ` (stop_reason ${payload.stop_reason ?? "none"}, blocks ${(payload.content ?? []).map((block) => block.type ?? "?").join(",") || "none"})` : ""
+  throw new Error(`${family} returned no json verdict${detail}`)
+}
+
 /** one json verdict from the chosen model */
 const askModel = async (family: Family, system: string, user: string): Promise<Verdict> => {
   const response = family === "anthropic"
     ? await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY ?? "", "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: process.env.ARCH_GOVERNOR_ANTHROPIC_MODEL || "claude-opus-5-5", max_tokens: 4000, system, messages: [{ role: "user", content: user }] }),
+        body: JSON.stringify({ model: process.env.ARCH_GOVERNOR_ANTHROPIC_MODEL || "claude-opus-5-5", max_tokens: 16000, system, messages: [{ role: "user", content: user }] }),
       })
     : await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -67,16 +86,15 @@ const askModel = async (family: Family, system: string, user: string): Promise<V
         body: JSON.stringify({ model: process.env.ARCH_GOVERNOR_OPENAI_MODEL || "gpt-6-sol", response_format: { type: "json_object" }, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
       })
   if (!response.ok) throw new Error(`${family} answered ${response.status}: ${(await response.text()).slice(0, 400)}`)
-  const payload = (await response.json()) as { content?: { text?: string }[]; choices?: { message?: { content?: string } }[] }
-  const text = family === "anthropic" ? payload.content?.[0]?.text : payload.choices?.[0]?.message?.content
-  const json = /\{[\s\S]*\}/.exec(text ?? "")?.[0]
-  if (!json) throw new Error(`${family} returned no json verdict`)
-  return JSON.parse(json) as Verdict
+  return JSON.parse(verdictJsonOf(family, (await response.json()) as ModelPayload)) as Verdict
 }
 
+/** `enforce` fails the check on a block verdict or a governor error; anything else (the default while it's being tested) only advises */
+export const isEnforcing = (mode: string | undefined) => mode?.trim().toLowerCase() === "enforce"
+
 /** the review comment body */
-export const reviewBodyOf = (verdict: Verdict, family: Family, harness: string | undefined) => [
-  `**Arch Governor: ${verdict.verdict === "block" ? "blocked" : "passed"}** (${family} reviewing ${harness ?? "unlabelled"} work)`,
+export const reviewBodyOf = (verdict: Verdict, family: Family, harness: string | undefined, enforcing = false) => [
+  `**Arch Governor: ${verdict.verdict === "block" ? (enforcing ? "blocked" : "would block") : "passed"}** (${family} reviewing ${harness ?? "unlabelled"} work)${enforcing ? "" : " · advisory, doesn't fail the check"}`,
   "",
   verdict.summary,
   ...(verdict.findings.length ? ["", ...verdict.findings.map((finding) => `- ${finding.severity === "block" ? "**block**" : "warn"} ${finding.file ? `\`${finding.file}${finding.line ? `:${finding.line}` : ""}\` ` : ""}${finding.note}`)] : []),
@@ -98,7 +116,8 @@ const main = async () => {
   const family = reviewerFamilyOf(harness, { anthropic: Boolean(process.env.ANTHROPIC_API_KEY), openai: Boolean(process.env.OPENAI_API_KEY) })
   const truncated = diff.length > maxDiffChars
   const verdict = await askModel(family, instructions(rules), `PR: ${pull.title}\n\n${pull.body ?? ""}\n\nDiff${truncated ? " (truncated)" : ""}:\n${diff.slice(0, maxDiffChars)}`)
-  const body = reviewBodyOf(verdict, family, harness)
+  const enforcing = isEnforcing(process.env.ARCH_GOVERNOR_MODE)
+  const body = reviewBodyOf(verdict, family, harness, enforcing)
   const review = await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/pulls/${pull.number}/reviews`, {
     method: "POST",
     headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN}`, accept: "application/vnd.github+json", "content-type": "application/json" },
@@ -106,10 +125,15 @@ const main = async () => {
   })
   if (!review.ok) console.error(`couldn't post the review: ${review.status}`)
   console.log(body)
-  if (verdict.verdict === "block") process.exit(1)
+  if (verdict.verdict !== "block") return
+  if (enforcing) process.exit(1)
+  console.log("::warning title=Arch Governor (advisory)::would block this PR; see the review comment. Set the org variable ARCH_GOVERNOR_MODE=enforce to fail the check.")
 }
 
 if (import.meta.main) main().catch((error: Error) => {
-  console.error(`arch governor failed: ${error.message}`)
-  process.exit(1)
+  if (isEnforcing(process.env.ARCH_GOVERNOR_MODE)) {
+    console.error(`arch governor failed: ${error.message}`)
+    process.exit(1)
+  }
+  console.log(`::warning title=Arch Governor (advisory)::couldn't review, not failing the check: ${error.message}`)
 })

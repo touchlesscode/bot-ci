@@ -31,3 +31,4 @@ jobs:
           anthropic-model: ${{ vars.ARCH_GOVERNOR_ANTHROPIC_MODEL }}
           openai-model: ${{ vars.ARCH_GOVERNOR_OPENAI_MODEL }}
           scope: ${{ vars.ARCH_GOVERNOR_SCOPE }}
+          mode: ${{ vars.ARCH_GOVERNOR_MODE }}

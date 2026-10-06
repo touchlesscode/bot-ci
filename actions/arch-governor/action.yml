@@ -1,5 +1,5 @@
 name: arch-governor
-description: Read-only architecture review of bot-authored pull requests by the other model family; fails on a "block" verdict
+description: Read-only architecture review of bot-authored pull requests by the other model family; advisory unless mode is enforce
 inputs:
   github-token:
     required: true
@@ -13,6 +13,9 @@ inputs:
     required: false
   scope:
     description: "bot (default): only PRs the bot opened; all: every PR"
+    required: false
+  mode:
+    description: "advisory (default): never fails the check; enforce: fails on a block verdict or a governor error"
     required: false
 runs:
   using: composite
@@ -29,4 +32,5 @@ runs:
         ARCH_GOVERNOR_ANTHROPIC_MODEL: ${{ inputs.anthropic-model }}
         ARCH_GOVERNOR_OPENAI_MODEL: ${{ inputs.openai-model }}
         ARCH_GOVERNOR_SCOPE: ${{ inputs.scope }}
+        ARCH_GOVERNOR_MODE: ${{ inputs.mode }}
         ARCH_GOVERNOR_DEFAULT_RULES: ${{ github.action_path }}/rules.md
