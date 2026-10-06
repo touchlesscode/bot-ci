@@ -1,0 +1,32 @@
+# runs in the org-ci repo only (not required on other repos): deletes org-ci preview
+# workers that haven't been redeployed for a week.
+name: reap-previews
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: List what would be deleted without deleting
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  reap:
+    runs-on: ${{ vars.ORG_CI_LIGHT_RUNNER || 'ubicloud-standard-2' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: node actions/previews/reapPreviews.ts ${{ inputs.dry-run && '--dry-run' || '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ORG_CI_PREVIEW_ZONE: ${{ vars.ORG_CI_PREVIEW_ZONE }}
+          ORG_CI_PREVIEW_TTL_DAYS: ${{ vars.ORG_CI_PREVIEW_TTL_DAYS }}

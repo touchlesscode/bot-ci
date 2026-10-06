@@ -1,0 +1,36 @@
+# required on every repo's default-branch PRs by the org ruleset "org-ci".
+# rulesets ignore trigger filters: this always runs on opened / synchronize / reopened.
+# staging previews only, exo-style (wrangler env.feature, <app>-<version>.touchlessapis.com),
+# with exo's CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID. production deploys need a
+# push-triggered workflow in the repo.
+name: org-ci
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  pull-requests: write
+
+concurrency:
+  group: org-ci-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: org-ci
+    runs-on: ${{ vars.ORG_CI_RUNNER || 'ubicloud-standard-8' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: touchlesscode/org-ci/actions/ci@main
+        with:
+          github-token: ${{ github.token }}
+          cloudflare-api-token: ${{ github.event.pull_request.head.repo.fork != true && secrets.CLOUDFLARE_API_TOKEN || '' }}
+          cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          app-secrets: ${{ github.event.pull_request.head.repo.fork != true && toJSON(secrets) || '{}' }}

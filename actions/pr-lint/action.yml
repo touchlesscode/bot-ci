@@ -1,0 +1,16 @@
+name: pr-lint
+description: exo's PR title and description rules (conventional title ending in "| EXO-1234" or "| NO-TICKET"; Summary, Jira Ticket Reference and Test Plan sections)
+inputs:
+  scope:
+    description: "bot (default): only PRs the bot opened or drove; all: every PR"
+    required: false
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 24
+    - shell: bash
+      run: node "$GITHUB_ACTION_PATH/lintPullRequest.ts"
+      env:
+        PR_LINT_SCOPE: ${{ inputs.scope }}

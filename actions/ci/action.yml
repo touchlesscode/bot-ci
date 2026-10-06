@@ -1,0 +1,58 @@
+name: org-ci
+description: For repos with no pull request CI of their own — exo's pipeline (nx affected, pnpm cache, GitHub Packages) or the repo's own scripts, then exo-style staging previews (wrangler env.feature) of affected Cloudflare Worker apps
+inputs:
+  github-token:
+    required: true
+  cloudflare-api-token:
+    description: exo's CLOUDFLARE_API_TOKEN; blank skips previews
+    required: false
+  cloudflare-account-id:
+    required: false
+  app-secrets:
+    description: toJSON(secrets) — apps' config.exo.secrets are taken from it and pushed with wrangler secret bulk
+    required: false
+    default: "{}"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 24
+    - id: plan
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/planChecks.ts"
+    - if: steps.plan.outputs.skip != 'true' && steps.plan.outputs.nx == 'true'
+      uses: nrwl/nx-set-shas@v5
+      with:
+        main-branch-name: ${{ github.event.repository.default_branch }}
+    - if: steps.plan.outputs.skip != 'true' && steps.plan.outputs.package-manager == 'pnpm'
+      uses: pnpm/action-setup@v6
+      with:
+        version: ${{ steps.plan.outputs.pnpm-version }}
+        run_install: false
+    - if: steps.plan.outputs.skip != 'true'
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ steps.plan.outputs.node-version }}
+        node-version-file: ${{ steps.plan.outputs.node-version-file }}
+        cache: ${{ steps.plan.outputs.cache }}
+        registry-url: https://npm.pkg.github.com
+        scope: "@touchlesscode"
+    - if: steps.plan.outputs.skip != 'true'
+      shell: bash
+      env:
+        INSTALL: ${{ steps.plan.outputs.install }}
+        CHECKS: ${{ steps.plan.outputs.checks }}
+        NODE_AUTH_TOKEN: ${{ inputs.github-token }}
+      run: bash "$GITHUB_ACTION_PATH/runChecks.sh"
+    - if: steps.plan.outputs.skip != 'true' && github.event_name == 'pull_request' && inputs.cloudflare-api-token != ''
+      shell: bash
+      env:
+        CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        NODE_AUTH_TOKEN: ${{ inputs.github-token }}
+        ORG_CI_NX: ${{ steps.plan.outputs.nx }}
+        ORG_CI_PACKAGE_MANAGER: ${{ steps.plan.outputs.package-manager }}
+        ORG_CI_SECRETS: ${{ inputs.app-secrets }}
+      run: node "$GITHUB_ACTION_PATH/deployPreviews.ts"

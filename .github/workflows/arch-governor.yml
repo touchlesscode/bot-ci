@@ -1,0 +1,33 @@
+# required on every repo's default-branch PRs by the org ruleset "org-ci".
+# no draft skip: rulesets ignore `types`, so a draft-time pass would never be re-run on ready_for_review.
+name: arch-governor
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    name: arch-governor
+    runs-on: ${{ vars.ORG_CI_LIGHT_RUNNER || 'ubicloud-standard-2' }}
+    timeout-minutes: 15
+    steps:
+      - if: github.event_name == 'merge_group'
+        run: echo "reviewed on the pull request; nothing to do in the merge queue"
+      - if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - if: github.event_name == 'pull_request'
+        uses: touchlesscode/org-ci/actions/arch-governor@main
+        with:
+          github-token: ${{ github.token }}
+          anthropic-api-key: ${{ secrets.ARCH_GOVERNOR_ANTHROPIC_API_KEY }}
+          openai-api-key: ${{ secrets.ARCH_GOVERNOR_OPENAI_API_KEY }}
+          anthropic-model: ${{ vars.ARCH_GOVERNOR_ANTHROPIC_MODEL }}
+          openai-model: ${{ vars.ARCH_GOVERNOR_OPENAI_MODEL }}
+          scope: ${{ vars.ARCH_GOVERNOR_SCOPE }}
