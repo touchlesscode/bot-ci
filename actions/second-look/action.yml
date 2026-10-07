@@ -1,17 +1,35 @@
 name: Second Look (beta)
-description: "Second Look's scope step (does this PR get one: opt-in by @touchless-bot comment, the marker, or sampling) and its main reviewer (a read-only agent on the base branch that reads the PR's Jira ticket and linked designs, the code around the change and the repo's docs, reviews the diff for fit and conventions, folds in both testers' reports, and posts one sticky comment as the Touchless Bot; advisory unless mode is enforce)"
+description: "Second Look's steps outside the testers, in the private second-look repo's dispatched run. prepare: fetch the PR, open its check, wait for its previews and bundle its files and diff for the testers (never runs PR code). synthesize: the main reviewer, a read-only agent on the base branch that reads the PR's Jira ticket and linked designs, the code around the change and the repo's docs, reviews the diff, folds in both testers' reports, posts one sticky comment as the Touchless Bot and closes the check. abandon: closes the check when the run ended without a review."
 inputs:
   step:
-    description: "scope or synthesize"
+    description: "prepare, synthesize or abandon"
     required: true
   github-token:
+    description: "a Touchless Bot App token for the PR's repo only. prepare: contents + pull-requests read, checks write; synthesize: contents read, checks write (and issues write only if post-token is blank); abandon: checks write"
     required: true
-  sample-every:
-    description: "scope: blank or 0 = opt-in only; 5 = also sample 1 in 5; 1 = every PR"
+  post-token:
+    description: "synthesize: clanker-in-chief's classic PAT (repo), so the review comment comes from that user. without it the App posts as touchless-bot[bot]"
     required: false
-  skip-authors:
+  repository:
+    description: "the PR's repo, owner/name"
+    required: true
+  number:
+    description: "the PR number"
     required: false
-  bot-logins:
+  requested-by:
+    description: "the GitHub login that asked for it"
+    required: false
+  head-sha:
+    description: "synthesize: the commit prepare bundled, so both look at the same one"
+    required: false
+  check-run-id:
+    description: "synthesize, abandon: the check prepare opened"
+    required: false
+  result:
+    description: "abandon: the reviewer job's result (cancelled, failure, skipped)"
+    required: false
+  preview-wait-minutes:
+    description: "prepare: how long to wait for the head commit's preview deploys (default 10)"
     required: false
   anthropic-api-key:
     required: false
@@ -22,15 +40,10 @@ inputs:
   openai-model:
     required: false
   mode:
-    description: "advisory (default): never fails the check; enforce: fails on a block verdict or a review error"
+    description: "advisory (default): the check is never red; enforce: a block or a failed review turns it red"
     required: false
   budget-usd:
     description: "the Claude reviewer's spend cap per run (default 3)"
-    required: false
-  scope-reason:
-    required: false
-  post-as:
-    description: "touchless-bot (default): queue the comment for the bot's relay, which posts it as the Touchless Bot; github-actions: post it with github-token"
     required: false
   jira-url:
     required: false
@@ -47,38 +60,96 @@ inputs:
     description: "a Figma token, to read frames linked from the PR or ticket"
     required: false
 outputs:
-  run:
-    value: ${{ steps.scope.outputs.run }}
-  reason:
-    value: ${{ steps.scope.outputs.reason }}
+  head-sha:
+    value: ${{ steps.pull.outputs.head-sha }}
+  check-run-id:
+    value: ${{ steps.check.outputs.check-run-id }}
 runs:
   using: composite
   steps:
     - uses: actions/setup-node@v6
       with:
         node-version: 24
-    - id: scope
-      if: inputs.step == 'scope'
+    - id: pull
+      if: inputs.step != 'abandon'
       shell: bash
-      run: node "$GITHUB_ACTION_PATH/scope.ts"
+      run: node "$GITHUB_ACTION_PATH/fetchPull.ts"
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
-        SECOND_LOOK_SAMPLE_EVERY: ${{ inputs.sample-every }}
-        SECOND_LOOK_SKIP_AUTHORS: ${{ inputs.skip-authors }}
-        SECOND_LOOK_BOT_LOGINS: ${{ inputs.bot-logins }}
-    - if: inputs.step == 'synthesize'
+        SECOND_LOOK_REPOSITORY: ${{ inputs.repository }}
+        SECOND_LOOK_NUMBER: ${{ inputs.number }}
+        SECOND_LOOK_HEAD_SHA: ${{ inputs.head-sha }}
+        SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
+    - id: check
+      if: inputs.step == 'prepare'
       shell: bash
+      run: node "$GITHUB_ACTION_PATH/checkRun.ts" start
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
-        PULL_NUMBER: ${{ github.event.pull_request.number }}
+        SECOND_LOOK_REPOSITORY: ${{ inputs.repository }}
+        SECOND_LOOK_HEAD_SHA: ${{ steps.pull.outputs.head-sha }}
+        SECOND_LOOK_REQUESTED_BY: ${{ inputs.requested-by }}
+    - if: inputs.step != 'abandon'
+      uses: actions/checkout@v7
+      with:
+        repository: ${{ inputs.repository }}
+        ref: ${{ steps.pull.outputs.base-sha }}
+        token: ${{ inputs.github-token }}
+        fetch-depth: 0
+        persist-credentials: false
+        path: ${{ inputs.step == 'prepare' && 'second-look-source' || '' }}
+    - if: inputs.step != 'abandon'
+      shell: bash
+      working-directory: ${{ inputs.step == 'prepare' && 'second-look-source' || '.' }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PULL_NUMBER: ${{ inputs.number }}
+        HEAD_SHA: ${{ steps.pull.outputs.head-sha }}
       run: |
         basic="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
         git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $basic" fetch --no-tags --quiet origin "+refs/pull/$PULL_NUMBER/head:refs/remotes/origin/second-look-head"
-        npm install --global --no-audit --no-fund --loglevel=error @anthropic-ai/claude-code @openai/codex
+        git cat-file -e "$HEAD_SHA^{commit}" || { echo "::error::$HEAD_SHA isn't on the PR any more (force-pushed?); ask again"; exit 1; }
+    - if: inputs.step == 'prepare'
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/awaitPreviews.ts"
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
+        SECOND_LOOK_PREVIEW_WAIT_MINUTES: ${{ inputs.preview-wait-minutes }}
+        SECOND_LOOK_PREVIEWS_FILE: ${{ runner.temp }}/second-look-bundle/previews.json
+    - if: inputs.step == 'prepare'
+      shell: bash
+      working-directory: second-look-source
+      env:
+        BUNDLE: ${{ runner.temp }}/second-look-bundle
+        BASE_SHA: ${{ steps.pull.outputs.base-sha }}
+        HEAD_SHA: ${{ steps.pull.outputs.head-sha }}
+      run: |
+        git diff --no-color "$BASE_SHA...$HEAD_SHA" > "$BUNDLE/pr.diff"
+        git diff --no-color --stat=160 "$BASE_SHA...$HEAD_SHA" > "$BUNDLE/pr.stat"
+        git archive --format=tar "$HEAD_SHA" | gzip -6 > "$BUNDLE/source.tar.gz"
+        echo "bundle: $(du -h "$BUNDLE/source.tar.gz" | cut -f1) of files at ${HEAD_SHA:0:7}, $(wc -l < "$BUNDLE/pr.diff") diff lines"
+    - if: inputs.step == 'prepare'
+      uses: actions/upload-artifact@v5
+      with:
+        name: second-look-bundle
+        path: ${{ runner.temp }}/second-look-bundle
+        retention-days: 1
+    - if: inputs.step == 'synthesize'
+      shell: bash
+      run: npm install --global --no-audit --no-fund --loglevel=error @anthropic-ai/claude-code @openai/codex
+    - if: inputs.step == 'synthesize'
+      uses: actions/download-artifact@v6
+      continue-on-error: true
+      with:
+        pattern: second-look-report-*
+        merge-multiple: true
+        path: ${{ runner.temp }}/second-look-reports
     - if: inputs.step == 'synthesize'
       shell: bash
       run: node "$GITHUB_ACTION_PATH/gatherContext.ts"
       env:
+        SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
         SECOND_LOOK_JIRA_URL: ${{ inputs.jira-url }}
         SECOND_LOOK_JIRA_EMAIL: ${{ inputs.jira-email }}
         SECOND_LOOK_JIRA_API_TOKEN: ${{ inputs.jira-api-token }}
@@ -90,6 +161,10 @@ runs:
       run: node "$GITHUB_ACTION_PATH/synthesize.ts"
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        SECOND_LOOK_POST_TOKEN: ${{ inputs.post-token }}
+        SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
+        SECOND_LOOK_CHECK_RUN_ID: ${{ inputs.check-run-id }}
+        SECOND_LOOK_REQUESTED_BY: ${{ inputs.requested-by }}
         SECOND_LOOK_CONTEXT_DIRECTORY: ${{ runner.temp }}/second-look-inputs/context
         SECOND_LOOK_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         SECOND_LOOK_OPENAI_API_KEY: ${{ inputs.openai-api-key }}
@@ -97,16 +172,13 @@ runs:
         SECOND_LOOK_OPENAI_MODEL: ${{ inputs.openai-model }}
         SECOND_LOOK_MODE: ${{ inputs.mode }}
         SECOND_LOOK_BUDGET_USD: ${{ inputs.budget-usd }}
-        SECOND_LOOK_SCOPE_REASON: ${{ inputs.scope-reason }}
         SECOND_LOOK_REPORTS_DIRECTORY: ${{ runner.temp }}/second-look-reports
         SECOND_LOOK_DEFAULT_RULES: ${{ github.action_path }}/rules.md
-        BOT_CI_POST_AS: ${{ inputs.post-as }}
-        BOT_CI_POSTS_DIRECTORY: ${{ runner.temp }}/bot-ci-posts
-    - if: always() && inputs.step == 'synthesize'
-      uses: actions/upload-artifact@v5
-      with:
-        name: bot-ci-posts-${{ github.job }}
-        path: ${{ runner.temp }}/bot-ci-posts
-        if-no-files-found: ignore
-        retention-days: 3
-        overwrite: true
+    - if: inputs.step == 'abandon'
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/checkRun.ts" abandon
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        SECOND_LOOK_REPOSITORY: ${{ inputs.repository }}
+        SECOND_LOOK_CHECK_RUN_ID: ${{ inputs.check-run-id }}
+        SECOND_LOOK_RESULT: ${{ inputs.result }}

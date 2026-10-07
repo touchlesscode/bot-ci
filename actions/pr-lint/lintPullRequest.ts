@@ -22,7 +22,7 @@ const semanticTitle = /^(feat|fix|docs|style|refactor|test|chore|build|ci|perf)(
 const ticketSuffix = /\| (EXO-\d+|NO-TICKET)$/
 const jiraReference = /^(EXO-\d+|\[EXO-\d+\]\(https?:\/\/[^/\s]+\/browse\/EXO-\d+\)|https?:\/\/[^/\s]+\/browse\/EXO-\d+|N\/A|NO-TICKET)$/i
 const harnessMarker = /<!--\s*harness:\s*(claude|codex)\s*-->/i
-const defaultBotLogins = ["touchless-bot[bot]"]
+const defaultBotLogins = ["touchless-bot[bot]", "clanker-in-chief"]
 
 const sections: Section[] = [
   {

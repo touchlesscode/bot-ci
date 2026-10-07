@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 /**
- * second look, before a tester starts: waits (up to SECOND_LOOK_PREVIEW_WAIT_MINUTES, default 10) for the head
+ * second look, in prepare (before the testers start): waits (up to SECOND_LOOK_PREVIEW_WAIT_MINUTES, default 10) for the head
  * commit's preview deploys to finish, then lists the previews in the pr description and whether each answers.
  * the tester tests against those instead of running the app itself. never fails the job.
  *
  *   node awaitPreviews.ts
  *
- * env: GITHUB_TOKEN (checks + pull-requests read), GITHUB_REPOSITORY, GITHUB_EVENT_PATH, optional GITHUB_API_URL,
+ * env: GITHUB_TOKEN (checks + pull-requests read on the pr's repo), SECOND_LOOK_EVENT_PATH (the pr, see targetOf.ts), optional GITHUB_API_URL,
  * SECOND_LOOK_PREVIEW_WAIT_MINUTES, SECOND_LOOK_PREVIEWS_FILE (default $RUNNER_TEMP/second-look-inputs/previews.json).
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { setTimeout as sleepFor } from "node:timers/promises"
 import { pendingPreviewChecksOf, type CheckRun } from "./pendingPreviewChecksOf.ts"
 import { previewLinksOf, type PreviewLink } from "./previewLinksOf.ts"
+import { targetOf } from "./targetOf.ts"
 
 /** a preview and what it answered (an http status, or why it didn't) */
 export type ProbedPreview = PreviewLink & { answered: string }
@@ -59,8 +60,7 @@ const main = async () => {
     console.log(`previews: ${file.note}; ${file.previews.map((preview) => `${preview.label} ${preview.url} (${preview.answered})`).join(", ") || "none listed"}`)
   }
   try {
-    const repository = process.env.GITHUB_REPOSITORY ?? ""
-    const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8")) as { pull_request: { number: number; head: { sha: string } } }
+    const { repository, pull } = targetOf()
     const api = process.env.GITHUB_API_URL || "https://api.github.com"
     const get: Get = async (path) => {
       const response = await fetch(`${api}${path}`, { headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN ?? ""}`, accept: "application/vnd.github+json" } })
@@ -68,8 +68,8 @@ const main = async () => {
       return response.json()
     }
     const waitMs = (Number(process.env.SECOND_LOOK_PREVIEW_WAIT_MINUTES) || 10) * 60_000
-    const note = await awaitPreviewChecks({ get, repository, sha: event.pull_request.head.sha, waitMs })
-    const { body } = (await get(`/repos/${repository}/pulls/${event.pull_request.number}`)) as { body?: string | null }
+    const note = await awaitPreviewChecks({ get, repository, sha: pull.head.sha, waitMs })
+    const { body } = (await get(`/repos/${repository}/pulls/${pull.number}`)) as { body?: string | null }
     const previews = await Promise.all(previewLinksOf(body).map(async (link) => ({ ...link, answered: await probe(link.url) })))
     write({ previews, note })
   } catch (error) {

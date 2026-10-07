@@ -1,4 +1,5 @@
-import type { IssueComment } from "./requestOf.ts"
+/** the slice of a github issue comment second look reads */
+export type IssueComment = { id: number; body?: string | null; user?: { login?: string } | null }
 
 /** every comment on a pr's conversation (issue comments), oldest first, 100 a page */
 export const issueCommentsOf = async ({ token, repository, number, fetchImpl = fetch }: {

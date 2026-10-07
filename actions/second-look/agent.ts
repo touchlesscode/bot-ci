@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 /**
- * second look, step 2 (one job per family): a tester agent in the pr's
- * checkout follows the pr's test plan (against its previews when they're up,
+ * second look, step 2 (one job per family): a tester agent in a snapshot of the
+ * pr's files follows the pr's test plan (against its previews when they're up,
  * see awaitPreviews.ts), then its report is written for the main reviewer. never fails the job: no key, a
  * crash or a timeout become a report that says so.
  *
- *   node agent.ts   (in the workflow, cwd = the pr checkout)
+ *   node agent.ts   (in the workflow, cwd = the pr's files, unpacked from prepare's bundle)
  *
  * env: SECOND_LOOK_FAMILY (anthropic | openai), SECOND_LOOK_API_KEY, optional SECOND_LOOK_MODEL,
  * SECOND_LOOK_BUDGET_USD (claude's spend cap, default 5), SECOND_LOOK_TIMEOUT_MINUTES (default 25),
  * SECOND_LOOK_PREVIEWS_FILE (awaitPreviews.ts's list), SECOND_LOOK_CODEX_SANDBOX (danger-full-access when codex's
- * linux sandbox can't start on the runner), GITHUB_EVENT_PATH, GITHUB_REPOSITORY, RUNNER_TEMP.
+ * linux sandbox can't start on the runner), SECOND_LOOK_EVENT_PATH (the pr, see targetOf.ts), SECOND_LOOK_DIFF_DIRECTORY
+ * (pr.diff and pr.stat from prepare; without it, the diff comes from git in cwd), RUNNER_TEMP.
  * writes $RUNNER_TEMP/second-look-report/second-look-<family>.json.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
@@ -22,11 +23,12 @@ import { childEnvironmentOf } from "./childEnvironmentOf.ts"
 import { cliCommandOf, defaultModels } from "./cliCommandOf.ts"
 import { finalMessageOf } from "./finalMessageOf.ts"
 import { cappedDiffOf, gitDiffOf } from "./gitDiffOf.ts"
+import { targetOf } from "./targetOf.ts"
 import { prepareAuth } from "./prepareAuth.ts"
 import { crashedReportOf, reportOf, skippedReportOf } from "./reportOf.ts"
 import { runCli } from "./runCli.ts"
 import { reportSchema } from "./schemas.ts"
-import type { AgentReport, Family, PullRequest } from "./types.ts"
+import type { AgentReport, Family } from "./types.ts"
 
 const maxPromptDiffChars = 60_000
 
@@ -36,9 +38,11 @@ const test = async (family: Family, model: string): Promise<AgentReport> => {
   const temporary = process.env.RUNNER_TEMP ?? "/tmp"
   const inputs = join(temporary, "second-look-inputs")
   mkdirSync(inputs, { recursive: true })
-  const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8")) as { pull_request: PullRequest }
-  const pull = event.pull_request
-  const { diff, stat } = gitDiffOf({ base: pull.base.sha, head: pull.head.sha })
+  const { repository, pull } = targetOf()
+  const diffDirectory = process.env.SECOND_LOOK_DIFF_DIRECTORY
+  const { diff, stat } = diffDirectory
+    ? { diff: readFileSync(join(diffDirectory, "pr.diff"), "utf8"), stat: readFileSync(join(diffDirectory, "pr.stat"), "utf8") }
+    : gitDiffOf({ base: pull.base.sha, head: pull.head.sha })
   const diffPath = join(inputs, "pr.diff")
   const schemaPath = join(inputs, "report.schema.json")
   const outputPath = join(inputs, `${family}-last-message.json`)
@@ -48,7 +52,7 @@ const test = async (family: Family, model: string): Promise<AgentReport> => {
   const previewsFile = process.env.SECOND_LOOK_PREVIEWS_FILE || join(inputs, "previews.json")
   const prompt = agentPromptOf({
     family,
-    repository: process.env.GITHUB_REPOSITORY ?? "",
+    repository,
     pull,
     stat,
     diff: capped.text,

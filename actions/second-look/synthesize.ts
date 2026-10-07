@@ -4,18 +4,20 @@
  * branch, with the ticket and designs gatherContext.ts read, it learns what the
  * pr is for and the code around it, reads the repo's docs for the intended
  * architecture, reviews the diff against all that and the rules, folds in both
- * testers' reports, and queues one sticky pr comment for the bot's relay to post
- * as the touchless bot (queuePost.ts). it never runs pr code. advisory by default: exits 1 only
- * with SECOND_LOOK_MODE=enforce on a block or an error.
+ * testers' reports, posts one sticky pr comment as clanker-in-chief and closes
+ * the pr's check with the outcome. it never runs pr code. advisory by default:
+ * a block turns the pr's check red only with SECOND_LOOK_MODE=enforce. exits 1 only
+ * when it crashes before closing the check, so the workflow's wrap-up closes it instead.
  *
- *   node synthesize.ts   (in the workflow, cwd = the base checkout with the pr head fetched)
+ *   node synthesize.ts   (in the workflow, cwd = the pr's repo checked out at its base, with the head fetched)
  *
- * env: GITHUB_TOKEN, GITHUB_REPOSITORY, GITHUB_EVENT_PATH, RUNNER_TEMP, SECOND_LOOK_ANTHROPIC_API_KEY and/or
+ * env: SECOND_LOOK_POST_TOKEN (clanker-in-chief's classic PAT, issues write; falls back to GITHUB_TOKEN),
+ * GITHUB_TOKEN (the touchless bot app, checks write on the pr's repo),
+ * SECOND_LOOK_EVENT_PATH (the pr, see targetOf.ts), RUNNER_TEMP, SECOND_LOOK_ANTHROPIC_API_KEY and/or
  * SECOND_LOOK_OPENAI_API_KEY, optional SECOND_LOOK_ANTHROPIC_MODEL, SECOND_LOOK_OPENAI_MODEL, SECOND_LOOK_MODE,
  * SECOND_LOOK_REPORTS_DIRECTORY (the testers' downloaded reports), SECOND_LOOK_DEFAULT_RULES,
- * SECOND_LOOK_SCOPE_REASON, SECOND_LOOK_BUDGET_USD (default 3), SECOND_LOOK_TIMEOUT_MINUTES (default 15),
- * SECOND_LOOK_CONTEXT_DIRECTORY (gatherContext.ts's output),
- * BOT_CI_POSTS_DIRECTORY (where queued posts go), BOT_CI_POST_AS (github-actions posts with GITHUB_TOKEN instead).
+ * SECOND_LOOK_REQUESTED_BY, SECOND_LOOK_BUDGET_USD (default 3), SECOND_LOOK_TIMEOUT_MINUTES (default 15),
+ * SECOND_LOOK_CONTEXT_DIRECTORY (gatherContext.ts's output), SECOND_LOOK_CHECK_RUN_ID (the check to close).
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
@@ -31,18 +33,22 @@ import { harnessOf } from "./harnessOf.ts"
 import { isEnforcing } from "./isEnforcing.ts"
 import { postStickyComment } from "./postStickyComment.ts"
 import { prepareAuth } from "./prepareAuth.ts"
-import { posterOf, queuePost } from "./queuePost.ts"
 import { storedReportOf } from "./reportOf.ts"
 import { reviewerFamilyOf } from "./reviewerFamilyOf.ts"
 import { repoRulePaths, rulesOf } from "./rulesOf.ts"
 import { runCli } from "./runCli.ts"
 import { verdictSchema } from "./schemas.ts"
+import { checkEndOf } from "./checkRunBodyOf.ts"
+import { sendCheckRun } from "./sendCheckRun.ts"
 import { synthesisPromptOf } from "./synthesisPrompt.ts"
-import type { Family, PullRequest, Verdict } from "./types.ts"
+import { targetOf } from "./targetOf.ts"
+import type { Family, Verdict } from "./types.ts"
 import { verdictOf } from "./verdictOf.ts"
 
 const maxPromptDiffChars = 120_000
 const families: Family[] = ["openai", "anthropic"]
+const posterLogin = "clanker-in-chief"
+const appLogin = "touchless-bot[bot]"
 
 const keyOf = (family: Family) => process.env[`SECOND_LOOK_${family.toUpperCase()}_API_KEY`] ?? ""
 const modelOf = (family: Family) => process.env[`SECOND_LOOK_${family.toUpperCase()}_MODEL`] || defaultModels[family]
@@ -81,9 +87,7 @@ const review = async ({ reviewer, prompt }: { reviewer: Family; prompt: string }
 }
 
 const main = async () => {
-  const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8")) as { pull_request: PullRequest }
-  const pull = event.pull_request
-  const repository = process.env.GITHUB_REPOSITORY ?? ""
+  const { repository, pull } = targetOf()
   const reportsDirectory = process.env.SECOND_LOOK_REPORTS_DIRECTORY ?? join(process.env.RUNNER_TEMP ?? "/tmp", "second-look-reports")
   const reports = families.map((family) => {
     const path = join(reportsDirectory, `second-look-${family}.json`)
@@ -113,34 +117,28 @@ const main = async () => {
   })
   const { verdict, error } = await review({ reviewer, prompt }).catch((failure: Error) => ({ verdict: undefined, error: failure.message }))
   const enforcing = isEnforcing(process.env.SECOND_LOOK_MODE)
-  const body = commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, enforcing, headSha: pull.head.sha, scopeReason: process.env.SECOND_LOOK_SCOPE_REASON || "sampled" })
+  const body = commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, enforcing, headSha: pull.head.sha, scopeReason: process.env.SECOND_LOOK_REQUESTED_BY ? `requested by @${process.env.SECOND_LOOK_REQUESTED_BY}` : "requested" })
   console.log(body)
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${body}\n`)
-  if (posterOf(process.env.BOT_CI_POST_AS) === "touchless-bot") {
-    queuePost({ directory: process.env.BOT_CI_POSTS_DIRECTORY ?? join(process.env.RUNNER_TEMP ?? "/tmp", "bot-ci-posts"), repository, number: pull.number, headSha: pull.head.sha, post: { kind: "sticky-comment", marker: commentMarker, body } })
-    console.log("second look comment: queued; the Touchless Bot posts it within about 2 minutes of the run finishing")
-  } else {
-    await postStickyComment({ token: process.env.GITHUB_TOKEN ?? "", repository, number: pull.number, body, marker: commentMarker, author: "github-actions[bot]" })
-      .then((url) => console.log(`second look comment: ${url}`))
-      .catch((failure: Error) => console.log(`::warning title=Second Look (beta)::couldn't post the comment: ${failure.message}`))
-  }
-  if (error) {
-    if (enforcing) {
-      console.error(`second look couldn't review: ${error}`)
-      process.exit(1)
-    }
-    console.log(`::warning title=Second Look (beta)::couldn't review, not failing the check: ${error}`)
-    return
-  }
-  if (verdict?.verdict !== "block") return
-  if (enforcing) process.exit(1)
-  console.log("::warning title=Second Look (beta)::would block this PR; see the comment. Set the org variable SECOND_LOOK_MODE=enforce to fail the check.")
+  const postToken = process.env.SECOND_LOOK_POST_TOKEN || process.env.GITHUB_TOKEN || ""
+  const checkToken = process.env.GITHUB_TOKEN || postToken
+  const commentUrl = await postStickyComment({ token: postToken, repository, number: pull.number, body, marker: commentMarker, author: process.env.SECOND_LOOK_POST_TOKEN ? posterLogin : appLogin })
+    .then((url) => {
+      console.log(`second look comment: ${url}`)
+      return url
+    })
+    .catch((failure: Error) => {
+      console.log(`::warning title=Second Look (beta)::couldn't post the comment: ${failure.message}`)
+      return undefined
+    })
+  const checkRunId = process.env.SECOND_LOOK_CHECK_RUN_ID
+  if (checkRunId) await sendCheckRun({ token: checkToken, repository, id: checkRunId, body: checkEndOf({ verdict, error, enforcing, commentUrl }) })
+    .catch((failure: Error) => console.log(`::warning title=Second Look (beta)::couldn't close the check: ${failure.message}`))
+  if (error) return console.log(`::warning title=Second Look (beta)::couldn't review: ${error}`)
+  if (verdict?.verdict === "block") console.log(`::warning title=Second Look (beta)::${enforcing ? "blocks" : "would block"} this PR; see the comment.${enforcing ? "" : " With the org variable SECOND_LOOK_MODE=enforce its check on the PR turns red."}`)
 }
 
 if (import.meta.main) main().catch((error: Error) => {
-  if (isEnforcing(process.env.SECOND_LOOK_MODE)) {
-    console.error(`second look failed: ${error.message}`)
-    process.exit(1)
-  }
-  console.log(`::warning title=Second Look (beta)::couldn't review, not failing the check: ${error.message}`)
+  console.error(`second look failed: ${error.message}`)
+  process.exit(1)
 })

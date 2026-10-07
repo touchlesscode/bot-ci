@@ -7,7 +7,8 @@ The CI and guardrails for bot-built code in touchlesscode, required on every rep
   - NX workspaces get exo's pipeline: `nx-set-shas`, `nx affected -t build|lint|typecheck|test`, the pnpm store cache.
   - Other Node repos get their own scripts.
   - It bundles each affected Cloudflare Worker app; **Previews**, a separate job that never runs the PR's code, deploys them to `<app>-<branch>-pr.touchlessapis.com`.
-- **Second Look (beta)** is opt-in: comment `@touchless-bot run this` on a PR. An OpenAI and an Anthropic tester each follow its test plan, against its previews when they're up, then a main reviewer reads the repo's docs and reviews the change against them. Touchless Bot posts one sticky comment; advisory.
+
+The actions for **Second Look (beta)** live here too, but it isn't required and doesn't run here: comment `@clanker-in-chief review this` on a PR and Touchless Bot runs it in the private `second-look` repo, whose logs can hold private code.
 
 **Reap Previews** runs here nightly and deletes previews that haven't been redeployed in a week.
 

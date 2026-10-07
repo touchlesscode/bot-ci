@@ -6,18 +6,18 @@
  *
  *   node gatherContext.ts
  *
- * env: GITHUB_EVENT_PATH, SECOND_LOOK_JIRA_URL (default https://touchless.atlassian.net), SECOND_LOOK_JIRA_EMAIL,
+ * env: SECOND_LOOK_EVENT_PATH (the pr, see targetOf.ts), SECOND_LOOK_JIRA_URL (default https://touchless.atlassian.net), SECOND_LOOK_JIRA_EMAIL,
  * SECOND_LOOK_JIRA_API_TOKEN, SECOND_LOOK_JIRA_PROJECTS (default EXO), SECOND_LOOK_FIGMA_TOKEN,
  * SECOND_LOOK_CONTEXT_DIRECTORY (default $RUNNER_TEMP/second-look-inputs/context). writes context.md there.
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { figmaFramesOf, type FigmaFrame } from "./figmaFramesOf.ts"
 import { figmaLinksOf } from "./figmaLinksOf.ts"
 import { jiraTicketOf, type TicketContext } from "./jiraTicketOf.ts"
 import { reviewContextOf } from "./reviewContextOf.ts"
 import { ticketKeysOf } from "./ticketKeysOf.ts"
-import type { PullRequest } from "./types.ts"
+import { targetOf } from "./targetOf.ts"
 
 /** a GET with these headers that throws on a non-2xx */
 const getterOf = (base: string, headers: Record<string, string>) => async (path: string) => {
@@ -29,7 +29,7 @@ const getterOf = (base: string, headers: Record<string, string>) => async (path:
 const main = async () => {
   const directory = process.env.SECOND_LOOK_CONTEXT_DIRECTORY || join(process.env.RUNNER_TEMP ?? "/tmp", "second-look-inputs", "context")
   mkdirSync(directory, { recursive: true })
-  const pull = (JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8")) as { pull_request: PullRequest }).pull_request
+  const { pull } = targetOf()
   const notes: string[] = []
   const keys = ticketKeysOf(pull, (process.env.SECOND_LOOK_JIRA_PROJECTS || "EXO").split(",").map((project) => project.trim()).filter(Boolean))
 

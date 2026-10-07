@@ -10,13 +10,11 @@ export type PullRequest = {
   title: string
   body?: string | null
   draft?: boolean
-  base: { sha: string; ref?: string }
-  head: { sha: string; ref?: string }
+  state?: string
+  base: { sha: string; ref?: string; repo?: { full_name?: string } }
+  head: { sha: string; ref?: string; repo?: { full_name?: string } }
   user?: { login?: string }
 }
-
-/** whether a pr gets a second look, and the line that explains it */
-export type ScopeDecision = { run: boolean; reason: string }
 
 /** one testing step a tester tried */
 export type ReplicatedStep = { step: string; command: string; result: "pass" | "fail" | "couldnt"; note: string }

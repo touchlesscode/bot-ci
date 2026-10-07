@@ -1,5 +1,5 @@
 name: Second Look (beta) tester
-description: "One Second Look tester (Codex for openai, Claude Code for anthropic) in the PR's checkout: follows the PR's test plan by hand against its previews (never test suites; CI runs those), then uploads its report for the main reviewer. Never fails the job."
+description: "One Second Look tester (Codex for openai, Claude Code for anthropic) in a snapshot of the PR's files from prepare's bundle: follows the PR's test plan by hand against its previews (never test suites; CI runs those), then uploads its report for the main reviewer. Gets no GitHub token for the PR's repo. Never fails the job."
 inputs:
   family:
     description: "openai or anthropic"
@@ -15,17 +15,19 @@ inputs:
     description: "openai: blank (workspace-write) or danger-full-access when codex's linux sandbox can't start on the runner"
     required: false
   packages-token:
-    description: "the job's GITHUB_TOKEN (packages: read), for @touchlesscode packages on GitHub Packages"
-    required: false
-  github-token:
-    description: "the job's GITHUB_TOKEN (checks + pull-requests read), to wait for the head's preview deploys and read their links"
-    required: false
-  preview-wait-minutes:
-    description: "how long to wait for the head commit's preview deploys (default 10)"
+    description: "a GITHUB_TOKEN with packages: read, for @touchlesscode packages on GitHub Packages (only packages that grant the running repo access)"
     required: false
 runs:
   using: composite
   steps:
+    - uses: actions/download-artifact@v6
+      with:
+        name: second-look-bundle
+        path: ${{ runner.temp }}/second-look-bundle
+    - shell: bash
+      env:
+        BUNDLE: ${{ runner.temp }}/second-look-bundle
+      run: tar -xzf "$BUNDLE/source.tar.gz" -C "$GITHUB_WORKSPACE"
     - uses: actions/setup-node@v6
       with:
         node-version: 24
@@ -40,12 +42,6 @@ runs:
         if [[ "$FAMILY" == "openai" ]]; then cli=@openai/codex; else cli=@anthropic-ai/claude-code; fi
         npm install --global --no-audit --no-fund --loglevel=error "$cli"
     - shell: bash
-      env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
-        SECOND_LOOK_PREVIEW_WAIT_MINUTES: ${{ inputs.preview-wait-minutes }}
-        SECOND_LOOK_PREVIEWS_FILE: ${{ runner.temp }}/second-look-inputs/previews.json
-      run: node "$GITHUB_ACTION_PATH/../second-look/awaitPreviews.ts"
-    - shell: bash
       run: node "$GITHUB_ACTION_PATH/../second-look/agent.ts"
       env:
         SECOND_LOOK_FAMILY: ${{ inputs.family }}
@@ -53,11 +49,13 @@ runs:
         SECOND_LOOK_MODEL: ${{ inputs.model }}
         SECOND_LOOK_BUDGET_USD: ${{ inputs.budget-usd }}
         SECOND_LOOK_CODEX_SANDBOX: ${{ inputs.codex-sandbox }}
-        SECOND_LOOK_PREVIEWS_FILE: ${{ runner.temp }}/second-look-inputs/previews.json
+        SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
+        SECOND_LOOK_DIFF_DIRECTORY: ${{ runner.temp }}/second-look-bundle
+        SECOND_LOOK_PREVIEWS_FILE: ${{ runner.temp }}/second-look-bundle/previews.json
     - if: always()
       uses: actions/upload-artifact@v5
       with:
-        name: second-look-${{ inputs.family }}
+        name: second-look-report-${{ inputs.family }}
         path: ${{ runner.temp }}/second-look-report/second-look-${{ inputs.family }}.json
         if-no-files-found: ignore
         retention-days: 7
