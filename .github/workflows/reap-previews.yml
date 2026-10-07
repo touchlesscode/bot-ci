@@ -1,6 +1,6 @@
-# runs in the org-ci repo only (not required on other repos): deletes org-ci preview
+# runs in the bot-ci repo only (not required on other repos): deletes bot-ci preview
 # workers that haven't been redeployed for a week.
-name: reap-previews
+name: Reap Previews
 
 on:
   schedule:
@@ -17,7 +17,8 @@ permissions:
 
 jobs:
   reap:
-    runs-on: ${{ vars.ORG_CI_LIGHT_RUNNER || 'ubicloud-standard-2' }}
+    name: Reap Previews
+    runs-on: ${{ vars.BOT_CI_LIGHT_RUNNER || vars.ORG_CI_LIGHT_RUNNER || 'ubicloud-standard-2' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -28,5 +29,5 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          ORG_CI_PREVIEW_ZONE: ${{ vars.ORG_CI_PREVIEW_ZONE }}
-          ORG_CI_PREVIEW_TTL_DAYS: ${{ vars.ORG_CI_PREVIEW_TTL_DAYS }}
+          BOT_CI_PREVIEW_ZONE: ${{ vars.BOT_CI_PREVIEW_ZONE || vars.ORG_CI_PREVIEW_ZONE }}
+          BOT_CI_PREVIEW_TTL_DAYS: ${{ vars.BOT_CI_PREVIEW_TTL_DAYS || vars.ORG_CI_PREVIEW_TTL_DAYS }}

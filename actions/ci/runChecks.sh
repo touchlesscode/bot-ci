@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run the org-ci plan: install, then every check even after one fails, so a PR
+# run the bot-ci plan: install, then every check even after one fails, so a PR
 # shows all of its problems at once. INSTALL and CHECKS ("name<TAB>command"
 # lines) come from planChecks.ts.
 set -uo pipefail
@@ -11,7 +11,7 @@ echo "::group::install"
 if ! bash -c "$INSTALL"; then
   echo "::endgroup::"
   echo "| install | failed |" >> "$summary"
-  echo "::error::org-ci: install failed ($INSTALL)"
+  echo "::error::Build: install failed ($INSTALL)"
   exit 1
 fi
 echo "::endgroup::"
@@ -27,13 +27,13 @@ while IFS=$'\t' read -r name command; do
   else
     failed+=("$name")
     echo "| $name | **failed** |" >> "$summary"
-    echo "::error::org-ci: $name failed ($command)"
+    echo "::error::Build: $name failed ($command)"
   fi
   echo "::endgroup::"
 done <<< "${CHECKS:-}"
 
 if (( ${#failed[@]} )); then
-  echo "org-ci: failed: ${failed[*]}"
+  echo "Build: failed: ${failed[*]}"
   exit 1
 fi
-echo "org-ci: all checks passed"
+echo "Build: all checks passed"

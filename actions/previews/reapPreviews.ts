@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * nightly preview reaper, run in the org-ci repo on a schedule. exo deletes its
+ * nightly preview reaper, run in the bot-ci repo on a schedule. exo deletes its
  * previews when the PR closes; required workflows never see a PR close, so this
- * deletes org-ci previews that haven't been redeployed for ORG_CI_PREVIEW_TTL_DAYS
+ * deletes bot-ci previews that haven't been redeployed for BOT_CI_PREVIEW_TTL_DAYS
  * (default 7) instead. an open PR gets its preview back on its next push. only
- * workers named `*-pr` that carry the ORG_CI_PREVIEW binding are touched — exo's
+ * workers named `*-pr` that carry the BOT_CI_PREVIEW binding are touched — exo's
  * own previews never are. a reaped worker's routes on the preview zone go with it.
  *
  *   node actions/previews/reapPreviews.ts [--dry-run]
  *
- * env: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, ORG_CI_PREVIEW_ZONE, ORG_CI_PREVIEW_TTL_DAYS.
+ * env: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, BOT_CI_PREVIEW_ZONE, BOT_CI_PREVIEW_TTL_DAYS.
  */
 export type Script = { id: string; modified_on: string }
 
@@ -23,8 +23,11 @@ const dayMilliseconds = 86_400_000
 export const staleCandidatesOf = (scripts: Script[], now: number, ttlDays: number) =>
   scripts.filter((script) => script.id.endsWith("-pr") && now - Date.parse(script.modified_on) > ttlDays * dayMilliseconds)
 
-/** whether org-ci deployed this worker (exo's previews have no such binding) */
-export const isOrgCiPreview = (bindings: Binding[]) => bindings.some((binding) => binding.type === "plain_text" && binding.name === "ORG_CI_PREVIEW")
+/** the binding names bot-ci marks its previews with; ORG_CI_PREVIEW is from before the rename */
+const previewMarkers = ["BOT_CI_PREVIEW", "ORG_CI_PREVIEW"]
+
+/** whether bot-ci deployed this worker (exo's previews have no such binding) */
+export const isBotCiPreview = (bindings: Binding[]) => bindings.some((binding) => binding.type === "plain_text" && previewMarkers.includes(binding.name))
 
 /** the zone routes pointing at a worker */
 export const routesOf = (routes: Route[], script: string) => routes.filter((route) => route.script === script)
@@ -41,17 +44,17 @@ const cloudflare = async <T>(path: string, init: RequestInit = {}) => {
 
 const main = async () => {
   const account = process.env.CLOUDFLARE_ACCOUNT_ID
-  if (!account || !process.env.CLOUDFLARE_API_TOKEN) throw new Error("the org-ci repo needs the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets (the ones exo deploys with)")
+  if (!account || !process.env.CLOUDFLARE_API_TOKEN) throw new Error("the bot-ci repo needs the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets (the ones exo deploys with)")
   const dryRun = process.argv.includes("--dry-run")
-  const ttlDays = Number(process.env.ORG_CI_PREVIEW_TTL_DAYS || 7)
-  const zoneName = process.env.ORG_CI_PREVIEW_ZONE || "touchlessapis.com"
+  const ttlDays = Number(process.env.BOT_CI_PREVIEW_TTL_DAYS || 7)
+  const zoneName = process.env.BOT_CI_PREVIEW_ZONE || "touchlessapis.com"
   const [zone] = await cloudflare<{ id: string }[]>(`/zones?name=${encodeURIComponent(zoneName)}`)
   const routes = zone ? await cloudflare<Route[]>(`/zones/${zone.id}/workers/routes`) : []
   const candidates = staleCandidatesOf(await cloudflare<Script[]>(`/accounts/${account}/workers/scripts`), Date.now(), ttlDays)
   let reaped = 0
   for (const script of candidates) {
     const settings = await cloudflare<{ bindings?: Binding[] }>(`/accounts/${account}/workers/scripts/${script.id}/settings`)
-    if (!isOrgCiPreview(settings.bindings ?? [])) continue
+    if (!isBotCiPreview(settings.bindings ?? [])) continue
     const own = routesOf(routes, script.id)
     console.log(`${dryRun ? "would delete" : "delete"} ${script.id} (last deploy ${script.modified_on}; ${own.map((route) => route.pattern).join(", ") || "no route"})`)
     if (dryRun) continue

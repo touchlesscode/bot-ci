@@ -1,6 +1,6 @@
-# required on every repo's default-branch PRs by the org ruleset "org-ci".
+# required on every repo's default-branch PRs by the org ruleset "bot-ci".
 # rulesets ignore `types`, so an edited title or body doesn't re-run this; a push or reopen does.
-name: pr-lint
+name: PR Lint
 
 on:
   pull_request:
@@ -11,13 +11,13 @@ permissions:
 
 jobs:
   lint:
-    name: pr-lint
-    runs-on: ${{ vars.ORG_CI_LIGHT_RUNNER || 'ubicloud-standard-2' }}
+    name: PR Lint
+    runs-on: ${{ vars.BOT_CI_LIGHT_RUNNER || vars.ORG_CI_LIGHT_RUNNER || 'ubicloud-standard-2' }}
     timeout-minutes: 5
     steps:
       - if: github.event_name == 'merge_group'
         run: echo "linted on the pull request; nothing to do in the merge queue"
       - if: github.event_name == 'pull_request'
-        uses: touchlesscode/org-ci/actions/pr-lint@main
+        uses: touchlesscode/bot-ci/actions/pr-lint@main
         with:
           scope: ${{ vars.PR_LINT_SCOPE }}

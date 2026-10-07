@@ -147,15 +147,15 @@ export const outputLinesOf = (plan: CheckPlan) => [
     `node-version=${plan.nodeVersion ?? ""}`,
     `node-version-file=${plan.nodeVersionFile ?? ""}`,
     `install=${plan.install}`,
-    "checks<<ORG_CI_CHECKS",
+    "checks<<BOT_CI_CHECKS",
     ...plan.checks.map((check) => `${check.name}\t${check.command}`),
-    "ORG_CI_CHECKS",
+    "BOT_CI_CHECKS",
   ]),
 ]
 
 if (import.meta.main) {
   const plan = planChecks(directorySnapshot(process.cwd()))
-  console.log(`org-ci: ${plan.skip ? "skipping — " : ""}${plan.reason}`)
+  console.log(`Build: ${plan.skip ? "skipping — " : ""}${plan.reason}`)
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `${outputLinesOf(plan).join("\n")}\n`)
-  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### org-ci\n${plan.skip ? "Skipped" : "Plan"}: ${plan.reason}\n`)
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Build\n${plan.skip ? "Skipped" : "Plan"}: ${plan.reason}\n`)
 }

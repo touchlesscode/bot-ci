@@ -1,0 +1,64 @@
+name: Second Look (beta) tester
+description: "One Second Look tester (Codex for openai, Claude Code for anthropic) in the PR's checkout: follows the PR's test plan by hand against its previews (never test suites; CI runs those), then uploads its report for the main reviewer. Never fails the job."
+inputs:
+  family:
+    description: "openai or anthropic"
+    required: true
+  api-key:
+    required: false
+  model:
+    required: false
+  budget-usd:
+    description: "anthropic: Claude Code's spend cap per run (default 5)"
+    required: false
+  codex-sandbox:
+    description: "openai: blank (workspace-write) or danger-full-access when codex's linux sandbox can't start on the runner"
+    required: false
+  packages-token:
+    description: "the job's GITHUB_TOKEN (packages: read), for @touchlesscode packages on GitHub Packages"
+    required: false
+  github-token:
+    description: "the job's GITHUB_TOKEN (checks + pull-requests read), to wait for the head's preview deploys and read their links"
+    required: false
+  preview-wait-minutes:
+    description: "how long to wait for the head commit's preview deploys (default 10)"
+    required: false
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 24
+    - shell: bash
+      env:
+        FAMILY: ${{ inputs.family }}
+        PACKAGES_TOKEN: ${{ inputs.packages-token }}
+      run: |
+        if [[ -n "$PACKAGES_TOKEN" ]]; then
+          printf '@touchlesscode:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$PACKAGES_TOKEN" >> "$HOME/.npmrc"
+        fi
+        if [[ "$FAMILY" == "openai" ]]; then cli=@openai/codex; else cli=@anthropic-ai/claude-code; fi
+        npm install --global --no-audit --no-fund --loglevel=error "$cli"
+    - shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        SECOND_LOOK_PREVIEW_WAIT_MINUTES: ${{ inputs.preview-wait-minutes }}
+        SECOND_LOOK_PREVIEWS_FILE: ${{ runner.temp }}/second-look-inputs/previews.json
+      run: node "$GITHUB_ACTION_PATH/../second-look/awaitPreviews.ts"
+    - shell: bash
+      run: node "$GITHUB_ACTION_PATH/../second-look/agent.ts"
+      env:
+        SECOND_LOOK_FAMILY: ${{ inputs.family }}
+        SECOND_LOOK_API_KEY: ${{ inputs.api-key }}
+        SECOND_LOOK_MODEL: ${{ inputs.model }}
+        SECOND_LOOK_BUDGET_USD: ${{ inputs.budget-usd }}
+        SECOND_LOOK_CODEX_SANDBOX: ${{ inputs.codex-sandbox }}
+        SECOND_LOOK_PREVIEWS_FILE: ${{ runner.temp }}/second-look-inputs/previews.json
+    - if: always()
+      uses: actions/upload-artifact@v5
+      with:
+        name: second-look-${{ inputs.family }}
+        path: ${{ runner.temp }}/second-look-report/second-look-${{ inputs.family }}.json
+        if-no-files-found: ignore
+        retention-days: 7
+        overwrite: true

@@ -1,0 +1,40 @@
+name: bot-ci deploy previews
+description: Deploys the preview bundles the bot-ci checks job made, on a runner that never checks out or runs the PR's code. Refuses anything that isn't <app>-<version> on <app>-<version>.<zone>, and never pushes infra secrets into a preview
+inputs:
+  github-token:
+    required: true
+  cloudflare-api-token:
+    description: exo's CLOUDFLARE_API_TOKEN
+    required: true
+  cloudflare-account-id:
+    required: true
+  app-secrets:
+    description: toJSON(secrets) — apps' config.exo.secrets are taken from it and pushed with wrangler secret bulk
+    required: false
+    default: "{}"
+  preview-zone:
+    required: false
+    default: touchlessapis.com
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 24
+    - uses: actions/download-artifact@v6
+      with:
+        name: bot-ci-previews
+        path: ${{ runner.temp }}/bot-ci-previews
+    - shell: bash
+      run: npm install --prefix "$RUNNER_TEMP/bot-ci-wrangler" --no-audit --no-fund --silent wrangler@4
+    - shell: bash
+      env:
+        CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token }}
+        CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        BOT_CI_SECRETS: ${{ inputs.app-secrets }}
+        BOT_CI_PREVIEW_ZONE: ${{ inputs.preview-zone }}
+        BOT_CI_PREVIEWS_DIRECTORY: ${{ runner.temp }}/bot-ci-previews
+        BOT_CI_WRANGLER: ${{ runner.temp }}/bot-ci-wrangler/node_modules/.bin/wrangler
+        WRANGLER_SEND_METRICS: "false"
+      run: node "$GITHUB_ACTION_PATH/../ci/deployPreviews.ts"

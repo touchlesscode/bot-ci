@@ -1,29 +1,32 @@
 #!/usr/bin/env node
 /**
- * staging previews, the way exo's CI does them. after the checks pass on a pull
- * request, every affected app whose wrangler config has an `env.feature` section is
- * deployed with `wrangler deploy --env feature`:
+ * staging previews, the way exo's CI does them, deployed by the previews job: a fresh
+ * runner that never checks out or runs the PR's code. the checks job already filled in
+ * `${VERSION}` / `${DEPLOY_ID}` and bundled every affected app with an `env.feature`
+ * (bundlePreviews.ts, no secrets there); this job takes that artifact as data and:
  *
- * - `${VERSION}` and `${DEPLOY_ID}` in the config are filled in first (exo's sed step).
- *   VERSION is exo's getVersionFromBranch (the last 20 chars of `<branch>-pr`), so an app's
- *   feature env names itself `<app>-${VERSION}` and routes `<app>-${VERSION}.touchlessapis.com/*`
- * - secrets the app lists in package.json `config.exo.secrets` are pushed with
- *   `wrangler secret bulk --env feature`, values taken from the repo's GitHub secrets
- * - the links go into the PR description as exo's Preview Deployments table, between
- *   its deployment-links markers; a failed deploy also gets exo's failure comment
+ * - refuses any app whose worker isn't `<app>-<version>` or whose routes aren't
+ *   `<app>-<version>.<zone>` (previewGuard.ts), so a PR can't deploy over prod
+ * - deploys the prebuilt bundle with a pinned wrangler installed outside any checkout
+ *   (`no_bundle`, no build command), with a config it writes itself
+ * - pushes the secrets the app lists in package.json `config.exo.secrets` with
+ *   `wrangler secret bulk --env feature`, never infra secrets (Cloudflare, model keys)
+ * - writes exo's Preview Deployments table into the PR description; a failed deploy also
+ *   gets exo's failure comment
  *
- * previews also carry the plain-text binding ORG_CI_PREVIEW=<repo>#<pr>; reapPreviews.ts
+ * previews also carry the plain-text binding BOT_CI_PREVIEW=<repo>#<pr>; reapPreviews.ts
  * only ever deletes workers with that binding, so exo's own previews are never touched.
  *
- *   node deployPreviews.ts   (in the action; cwd = the checked-out repo)
+ *   node deployPreviews.ts   (in the deploy-previews action)
  *
  * env: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, GITHUB_TOKEN, GITHUB_EVENT_PATH,
- * GITHUB_REPOSITORY, GITHUB_HEAD_REF, GITHUB_SHA, NX_BASE, ORG_CI_NX (true|false),
- * ORG_CI_PACKAGE_MANAGER, ORG_CI_SECRETS (JSON of the repo's secrets).
+ * GITHUB_REPOSITORY, GITHUB_HEAD_REF, BOT_CI_PREVIEWS_DIRECTORY (the downloaded artifact),
+ * BOT_CI_WRANGLER (the pinned wrangler binary), BOT_CI_PREVIEW_ZONE, BOT_CI_SECRETS (JSON of the repo's secrets).
  */
 import { execFileSync } from "node:child_process"
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs"
-import { basename, dirname, join } from "node:path"
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { basename, join } from "node:path"
+import { deployConfigOf, infraSecretsIn, previewProblemsOf, type WranglerConfig } from "./previewGuard.ts"
 
 export type PreviewTarget = { label: string; root: string; config: string }
 
@@ -33,13 +36,20 @@ export type DeployStatus = "success" | "failed" | "skipped"
 
 export type PreviewRow = { label: string; status: DeployStatus; url?: string }
 
+/** what the checks job hands the previews job: per app, its filled-in config and how it bundled */
+export type PreviewManifest = {
+  version: string
+  targets: { label: string; index: number; configText: string; status: "bundled" | "failed"; reason?: string; secretNames?: string[]; mainFile?: string; hasAssets?: boolean }[]
+  skipped: Skipped[]
+}
+
 type Route = string | { pattern: string; custom_domain?: boolean }
 
 type FeatureEnv = { name?: string; routes?: Route[]; route?: Route }
 
 const wranglerFiles = ["wrangler.jsonc", "wrangler.json", "wrangler.toml"]
 const maxVersionLength = 20
-export const previewMarker = "ORG_CI_PREVIEW"
+export const previewMarker = "BOT_CI_PREVIEW"
 export const linksStart = "<!-- deployment-links:start -->"
 export const linksEnd = "<!-- deployment-links:end -->"
 export const failureCommentOf = (runUrl: string) => `❌ Feature branch deployment failed. Please check the [workflow log](${runUrl}) for more details.`
@@ -152,31 +162,6 @@ export const upsertPreviewBlock = (body: string, block: string) => {
   return pattern.test(body) ? body.replace(pattern, () => block) : `${body.trimEnd()}\n\n${block}\n`
 }
 
-const commandOf = (prefix: string) => prefix.split(" ")
-
-/** nx projects affected vs a base, by root */
-const affectedRootsSince = (execPrefix: string, base: string) => {
-  const [command, ...prefix] = commandOf(execPrefix)
-  const names = JSON.parse(execFileSync(command, [...prefix, "nx", "show", "projects", "--affected", `--base=${base}`, "--head=HEAD", "--json"], { encoding: "utf8" })) as string[]
-  return names.map((name) => (JSON.parse(execFileSync(command, [...prefix, "nx", "show", "project", name, "--json"], { encoding: "utf8" })) as { root: string }).root)
-}
-
-/** exo's affected set: vs nx-set-shas' base and vs HEAD~1, deduplicated */
-const affectedRootsOf = (execPrefix: string) => {
-  const bases = [process.env.NX_BASE || "origin/HEAD", "HEAD~1"]
-  return [...new Set(bases.flatMap((base) => {
-    try {
-      return affectedRootsSince(execPrefix, base)
-    } catch {
-      return []
-    }
-  }))]
-}
-
-/** wrangler from the workspace when it's installed, else a pinned npx download */
-const wranglerCommandOf = (execPrefix: string, root: string) =>
-  existsSync("node_modules/.bin/wrangler") || existsSync(join(root, "node_modules/.bin/wrangler")) ? [...commandOf(execPrefix), "wrangler"] : ["npx", "--yes", "wrangler@4"]
-
 const githubHeaders = () => ({ authorization: `Bearer ${process.env.GITHUB_TOKEN}`, accept: "application/vnd.github+json", "content-type": "application/json" })
 
 /** set the PR description's preview block through the API */
@@ -195,29 +180,48 @@ const commentFailure = async (repository: string, number: number) => {
   await fetch(`${process.env.GITHUB_API_URL || "https://api.github.com"}/repos/${repository}/issues/${number}/comments`, { method: "POST", headers: githubHeaders(), body: JSON.stringify({ body: failureCommentOf(runUrl) }) })
 }
 
-/** deploy one app's feature env and push its secrets; returns its row */
-const deployTarget = (target: PreviewTarget, context: { execPrefix: string; version: string; deployId: string; marker: string; secrets: Record<string, string | undefined> }): PreviewRow => {
-  const text = fillPlaceholders(readFileSync(target.config, "utf8"), context)
-  writeFileSync(target.config, text)
-  const urls = previewUrlsOf(featureEnvOf(parseJsonc(text)) ?? {})
-  const packagePath = join(dirname(target.config), "package.json")
-  const names = existsSync(packagePath) ? secretNamesOf(JSON.parse(readFileSync(packagePath, "utf8"))) : []
-  const secrets = secretPayloadOf(names, context.secrets)
-  if ("missing" in secrets) {
-    console.log(`::error::${target.label}: config.exo.secrets lists ${secrets.missing.join(", ")}, which the repo doesn't have as GitHub secrets`)
-    return { label: target.label, status: "failed" }
+/** a label safe to show in the PR description */
+const safeLabelOf = (label: string) => label.replace(/[^\w.-]/g, "-").slice(0, 60) || "app"
+
+/** check one bundled app, then deploy it and push its secrets; returns its row */
+const deployTarget = (target: PreviewManifest["targets"][number], context: { wrangler: string; artifact: string; version: string; zone: string; marker: string; secrets: Record<string, string | undefined> }): PreviewRow => {
+  const label = safeLabelOf(target.label)
+  const fail = (reason: string): PreviewRow => {
+    console.log(`::error::preview not deployed for ${label}: ${reason}`)
+    return { label, status: "failed" }
   }
-  const [command, ...args] = wranglerCommandOf(context.execPrefix, target.root)
-  const options = { cwd: dirname(target.config), env: { ...process.env, ENV: "feature" } }
-  const config = basename(target.config)
-  console.log(`::group::deploy ${target.label} (env feature, ${context.version}) → ${urls.join(", ") || "no route"}`)
+  if (target.status !== "bundled" || !target.mainFile) return fail(target.reason ?? "it didn't bundle")
+  if (!Number.isInteger(target.index) || target.index < 0) return fail("its bundle index isn't a number")
+  if (!/^[\w.-]+\.m?js$/.test(target.mainFile)) return fail(`"${target.mainFile}" isn't a bundle file name`)
+  let config: WranglerConfig
   try {
-    execFileSync(command, [...args, "deploy", "--config", config, "--env", "feature", "--var", `${previewMarker}:${context.marker}`], { ...options, stdio: "inherit" })
-    if (names.length) execFileSync(command, [...args, "secret", "bulk", "--config", config, "--env", "feature"], { ...options, input: JSON.stringify(secrets.payload), stdio: ["pipe", "inherit", "inherit"] })
-    return { label: target.label, status: "success", url: urls[0] }
+    config = parseJsonc(target.configText) as WranglerConfig
+  } catch (error) {
+    return fail(`its wrangler config doesn't parse: ${(error as Error).message}`)
+  }
+  const problems = previewProblemsOf({ config, version: context.version, zone: context.zone })
+  if (problems.length) return fail(problems.join("; "))
+  const names = target.secretNames ?? []
+  const infra = infraSecretsIn(names)
+  if (infra.length) return fail(`config.exo.secrets lists ${infra.join(", ")}; infra secrets never go into a preview`)
+  const secrets = secretPayloadOf(names, context.secrets)
+  if ("missing" in secrets) return fail(`config.exo.secrets lists ${secrets.missing.join(", ")}, which the repo doesn't have as GitHub secrets`)
+  const source = join(context.artifact, String(target.index))
+  const stage = mkdtempSync(join(process.env.RUNNER_TEMP ?? "/tmp", "bot-ci-deploy-"))
+  cpSync(join(source, "bundle"), join(stage, "bundle"), { recursive: true })
+  const hasAssets = Boolean(target.hasAssets) && existsSync(join(source, "assets"))
+  if (hasAssets) cpSync(join(source, "assets"), join(stage, "assets"), { recursive: true })
+  writeFileSync(join(stage, "wrangler.json"), JSON.stringify(deployConfigOf(config, { mainFile: target.mainFile, hasAssets }), null, 2))
+  const urls = previewUrlsOf(config.env?.feature ?? {})
+  const options = { cwd: stage, env: { ...process.env, ENV: "feature" } }
+  console.log(`::group::deploy ${label} (env feature, ${context.version}) → ${urls.join(", ") || "no route"}`)
+  try {
+    execFileSync(context.wrangler, ["deploy", "--config", "wrangler.json", "--env", "feature", "--var", `${previewMarker}:${context.marker}`], { ...options, stdio: "inherit" })
+    if (names.length) execFileSync(context.wrangler, ["secret", "bulk", "--config", "wrangler.json", "--env", "feature"], { ...options, input: JSON.stringify(secrets.payload), stdio: ["pipe", "inherit", "inherit"] })
+    return { label, status: "success", url: urls[0] }
   } catch {
-    console.log(`::error::preview deploy failed for ${target.label}`)
-    return { label: target.label, status: "failed" }
+    console.log(`::error::preview deploy failed for ${label}`)
+    return { label, status: "failed" }
   } finally {
     console.log("::endgroup::")
   }
@@ -229,17 +233,19 @@ const main = async () => {
   if (!pull) return console.log("previews: not a pull request; nothing to deploy")
   if (event.sender?.login === "dependabot[bot]") return console.log("previews: dependabot PRs don't deploy (as in exo)")
   const repository = process.env.GITHUB_REPOSITORY ?? ""
-  const version = versionOf({ eventName: "pull_request", headRef: process.env.GITHUB_HEAD_REF || pull.head.ref, sha: process.env.GITHUB_SHA ?? "" })
-  const deployId = deployIdOf(execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(), version)
-  const execPrefix = { pnpm: "pnpm exec", yarn: "yarn", bun: "bunx", npm: "npx --no-install" }[process.env.ORG_CI_PACKAGE_MANAGER ?? "npm"] ?? "npx --no-install"
-  const roots = process.env.ORG_CI_NX === "true" ? affectedRootsOf(execPrefix) : ["."]
-  const { targets, skipped } = previewTargetsOf({ roots, repositoryName: repository.split("/")[1] ?? "app", exists: existsSync, readText: (path) => readFileSync(path, "utf8") })
-  for (const skip of skipped) console.log(`::warning::preview skipped for ${skip.label}: ${skip.reason}`)
-  if (!targets.length) return console.log("previews: no affected app has a wrangler env.feature; nothing to deploy")
-
-  const secrets = JSON.parse(process.env.ORG_CI_SECRETS || "{}") as Record<string, string | undefined>
-  const rows = targets.map((target) => deployTarget(target, { execPrefix, version, deployId, marker: `${repository}#${pull.number}`, secrets }))
-  const allRows = [...rows, ...skipped.map((skip): PreviewRow => ({ label: skip.label, status: "skipped" }))]
+  const artifact = process.env.BOT_CI_PREVIEWS_DIRECTORY ?? ""
+  const manifestPath = join(artifact, "manifest.json")
+  if (!existsSync(manifestPath)) return console.log("previews: no bundles from the checks job; nothing to deploy")
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as PreviewManifest
+  const version = versionOf({ eventName: "pull_request", headRef: process.env.GITHUB_HEAD_REF || pull.head.ref, sha: "" })
+  if (manifest.version !== version) console.log(`::warning::the bundles were filled in for "${manifest.version}", not "${version}"; the guard checks against "${version}"`)
+  const zone = process.env.BOT_CI_PREVIEW_ZONE || "touchlessapis.com"
+  const wrangler = process.env.BOT_CI_WRANGLER ?? ""
+  if (!existsSync(wrangler)) throw new Error(`no pinned wrangler at "${wrangler}"`)
+  mkdirSync(process.env.RUNNER_TEMP ?? "/tmp", { recursive: true })
+  const secrets = JSON.parse(process.env.BOT_CI_SECRETS || "{}") as Record<string, string | undefined>
+  const rows = manifest.targets.map((target) => deployTarget(target, { wrangler, artifact, version, zone, marker: `${repository}#${pull.number}`, secrets }))
+  const allRows = [...rows, ...manifest.skipped.map((skip): PreviewRow => ({ label: safeLabelOf(skip.label), status: "skipped" }))]
   await updatePullBody(repository, pull.number, previewBlockOf(allRows, new Date()))
   const failed = rows.filter((row) => row.status === "failed")
   if (failed.length) await commentFailure(repository, pull.number)

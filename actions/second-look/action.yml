@@ -1,0 +1,112 @@
+name: Second Look (beta)
+description: "Second Look's scope step (does this PR get one: opt-in by @touchless-bot comment, the marker, or sampling) and its main reviewer (a read-only agent on the base branch that reads the PR's Jira ticket and linked designs, the code around the change and the repo's docs, reviews the diff for fit and conventions, folds in both testers' reports, and posts one sticky comment as the Touchless Bot; advisory unless mode is enforce)"
+inputs:
+  step:
+    description: "scope or synthesize"
+    required: true
+  github-token:
+    required: true
+  sample-every:
+    description: "scope: blank or 0 = opt-in only; 5 = also sample 1 in 5; 1 = every PR"
+    required: false
+  skip-authors:
+    required: false
+  bot-logins:
+    required: false
+  anthropic-api-key:
+    required: false
+  openai-api-key:
+    required: false
+  anthropic-model:
+    required: false
+  openai-model:
+    required: false
+  mode:
+    description: "advisory (default): never fails the check; enforce: fails on a block verdict or a review error"
+    required: false
+  budget-usd:
+    description: "the Claude reviewer's spend cap per run (default 3)"
+    required: false
+  scope-reason:
+    required: false
+  post-as:
+    description: "touchless-bot (default): queue the comment for the bot's relay, which posts it as the Touchless Bot; github-actions: post it with github-token"
+    required: false
+  jira-url:
+    required: false
+  jira-email:
+    description: "the bot's Jira user (default bot@touchless.io)"
+    required: false
+  jira-api-token:
+    description: "that user's Jira API token, to read the PR's ticket"
+    required: false
+  jira-projects:
+    description: "comma list of Jira project keys to look for (default EXO)"
+    required: false
+  figma-token:
+    description: "a Figma token, to read frames linked from the PR or ticket"
+    required: false
+outputs:
+  run:
+    value: ${{ steps.scope.outputs.run }}
+  reason:
+    value: ${{ steps.scope.outputs.reason }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 24
+    - id: scope
+      if: inputs.step == 'scope'
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/scope.ts"
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        SECOND_LOOK_SAMPLE_EVERY: ${{ inputs.sample-every }}
+        SECOND_LOOK_SKIP_AUTHORS: ${{ inputs.skip-authors }}
+        SECOND_LOOK_BOT_LOGINS: ${{ inputs.bot-logins }}
+    - if: inputs.step == 'synthesize'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PULL_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        basic="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+        git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $basic" fetch --no-tags --quiet origin "+refs/pull/$PULL_NUMBER/head:refs/remotes/origin/second-look-head"
+        npm install --global --no-audit --no-fund --loglevel=error @anthropic-ai/claude-code @openai/codex
+    - if: inputs.step == 'synthesize'
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/gatherContext.ts"
+      env:
+        SECOND_LOOK_JIRA_URL: ${{ inputs.jira-url }}
+        SECOND_LOOK_JIRA_EMAIL: ${{ inputs.jira-email }}
+        SECOND_LOOK_JIRA_API_TOKEN: ${{ inputs.jira-api-token }}
+        SECOND_LOOK_JIRA_PROJECTS: ${{ inputs.jira-projects }}
+        SECOND_LOOK_FIGMA_TOKEN: ${{ inputs.figma-token }}
+        SECOND_LOOK_CONTEXT_DIRECTORY: ${{ runner.temp }}/second-look-inputs/context
+    - if: inputs.step == 'synthesize'
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/synthesize.ts"
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        SECOND_LOOK_CONTEXT_DIRECTORY: ${{ runner.temp }}/second-look-inputs/context
+        SECOND_LOOK_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        SECOND_LOOK_OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        SECOND_LOOK_ANTHROPIC_MODEL: ${{ inputs.anthropic-model }}
+        SECOND_LOOK_OPENAI_MODEL: ${{ inputs.openai-model }}
+        SECOND_LOOK_MODE: ${{ inputs.mode }}
+        SECOND_LOOK_BUDGET_USD: ${{ inputs.budget-usd }}
+        SECOND_LOOK_SCOPE_REASON: ${{ inputs.scope-reason }}
+        SECOND_LOOK_REPORTS_DIRECTORY: ${{ runner.temp }}/second-look-reports
+        SECOND_LOOK_DEFAULT_RULES: ${{ github.action_path }}/rules.md
+        BOT_CI_POST_AS: ${{ inputs.post-as }}
+        BOT_CI_POSTS_DIRECTORY: ${{ runner.temp }}/bot-ci-posts
+    - if: always() && inputs.step == 'synthesize'
+      uses: actions/upload-artifact@v5
+      with:
+        name: bot-ci-posts-${{ github.job }}
+        path: ${{ runner.temp }}/bot-ci-posts
+        if-no-files-found: ignore
+        retention-days: 3
+        overwrite: true

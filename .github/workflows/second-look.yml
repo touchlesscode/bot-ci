@@ -1,0 +1,132 @@
+# required on every repo's default-branch PRs by the org ruleset "bot-ci".
+# opt-in during beta: the scope job only goes ahead when an org member has commented
+# "@touchless-bot …" on the PR (the bot's bot-ci-relay poller then re-runs this
+# run), the body carries <!-- second-look -->, or SECOND_LOOK_SAMPLE_EVERY samples it.
+# rulesets ignore trigger filters, so there's no comment trigger and no ready_for_review run;
+# everything else passes in seconds.
+name: Second Look (beta)
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: second-look-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scope:
+    name: Scope
+    runs-on: ${{ vars.BOT_CI_LIGHT_RUNNER || vars.ORG_CI_LIGHT_RUNNER || 'ubicloud-standard-2' }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+      reason: ${{ steps.scope.outputs.reason }}
+    steps:
+      - id: scope
+        uses: touchlesscode/bot-ci/actions/second-look@main
+        with:
+          step: scope
+          github-token: ${{ github.token }}
+          sample-every: ${{ vars.SECOND_LOOK_SAMPLE_EVERY }}
+          skip-authors: ${{ vars.SECOND_LOOK_SKIP_AUTHORS }}
+          bot-logins: ${{ vars.SECOND_LOOK_BOT_LOGINS }}
+
+  openai-agent:
+    name: OpenAI Tester
+    needs: scope
+    if: needs.scope.outputs.run == 'true'
+    runs-on: ${{ vars.SECOND_LOOK_RUNNER || vars.BOT_CI_RUNNER || vars.ORG_CI_RUNNER || 'ubicloud-standard-8' }}
+    timeout-minutes: 45
+    permissions:
+      checks: read
+      contents: read
+      packages: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: touchlesscode/bot-ci/actions/second-look-agent@main
+        with:
+          family: openai
+          api-key: ${{ secrets.SECOND_LOOK_OPENAI_API_KEY || secrets.ARCH_GOVERNOR_OPENAI_API_KEY }}
+          model: ${{ vars.SECOND_LOOK_OPENAI_MODEL || vars.ARCH_GOVERNOR_OPENAI_MODEL }}
+          codex-sandbox: ${{ vars.SECOND_LOOK_CODEX_SANDBOX }}
+          packages-token: ${{ github.token }}
+          github-token: ${{ github.token }}
+          preview-wait-minutes: ${{ vars.SECOND_LOOK_PREVIEW_WAIT_MINUTES }}
+
+  anthropic-agent:
+    name: Anthropic Tester
+    needs: scope
+    if: needs.scope.outputs.run == 'true'
+    runs-on: ${{ vars.SECOND_LOOK_RUNNER || vars.BOT_CI_RUNNER || vars.ORG_CI_RUNNER || 'ubicloud-standard-8' }}
+    timeout-minutes: 45
+    permissions:
+      checks: read
+      contents: read
+      packages: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: touchlesscode/bot-ci/actions/second-look-agent@main
+        with:
+          family: anthropic
+          api-key: ${{ secrets.SECOND_LOOK_ANTHROPIC_API_KEY || secrets.ARCH_GOVERNOR_ANTHROPIC_API_KEY }}
+          model: ${{ vars.SECOND_LOOK_ANTHROPIC_MODEL || vars.ARCH_GOVERNOR_ANTHROPIC_MODEL }}
+          budget-usd: ${{ vars.SECOND_LOOK_TESTER_BUDGET_USD }}
+          packages-token: ${{ github.token }}
+          github-token: ${{ github.token }}
+          preview-wait-minutes: ${{ vars.SECOND_LOOK_PREVIEW_WAIT_MINUTES }}
+
+  second-look:
+    name: Main Reviewer
+    needs: [scope, openai-agent, anthropic-agent]
+    if: always() && needs.scope.outputs.run == 'true'
+    runs-on: ${{ vars.BOT_CI_LIGHT_RUNNER || vars.ORG_CI_LIGHT_RUNNER || 'ubicloud-standard-2' }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v6
+        continue-on-error: true
+        with:
+          pattern: second-look-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/second-look-reports
+      - uses: touchlesscode/bot-ci/actions/second-look@main
+        with:
+          step: synthesize
+          github-token: ${{ github.token }}
+          anthropic-api-key: ${{ secrets.SECOND_LOOK_ANTHROPIC_API_KEY || secrets.ARCH_GOVERNOR_ANTHROPIC_API_KEY }}
+          openai-api-key: ${{ secrets.SECOND_LOOK_OPENAI_API_KEY || secrets.ARCH_GOVERNOR_OPENAI_API_KEY }}
+          anthropic-model: ${{ vars.SECOND_LOOK_ANTHROPIC_MODEL || vars.ARCH_GOVERNOR_ANTHROPIC_MODEL }}
+          openai-model: ${{ vars.SECOND_LOOK_OPENAI_MODEL || vars.ARCH_GOVERNOR_OPENAI_MODEL }}
+          mode: ${{ vars.SECOND_LOOK_MODE || vars.ARCH_GOVERNOR_MODE }}
+          budget-usd: ${{ vars.SECOND_LOOK_REVIEWER_BUDGET_USD }}
+          post-as: ${{ vars.BOT_CI_POST_AS }}
+          scope-reason: ${{ needs.scope.outputs.reason }}
+          jira-url: ${{ vars.SECOND_LOOK_JIRA_URL }}
+          jira-email: ${{ vars.SECOND_LOOK_JIRA_EMAIL }}
+          jira-api-token: ${{ secrets.SECOND_LOOK_JIRA_API_TOKEN }}
+          jira-projects: ${{ vars.SECOND_LOOK_JIRA_PROJECTS }}
+          figma-token: ${{ secrets.SECOND_LOOK_FIGMA_TOKEN }}

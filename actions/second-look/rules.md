@@ -1,6 +1,6 @@
 # Architecture rules (template)
 
-Copy to `.github/arch-governor/rules.md` and replace with the repo's real rules. Keep it short; the reviewer reads all of it on every PR.
+Copy to `.github/second-look/rules.md` and replace with the repo's real rules. Keep it short; Second Look's main reviewer reads all of it on every run, alongside the repo's docs.
 
 - Data access goes through the data layer (core-db / GraphQL); no raw SQL in app code.
 - Auth and secrets never appear in client bundles, logs or test fixtures.

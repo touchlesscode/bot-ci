@@ -1,9 +1,11 @@
-# required on every repo's default-branch PRs by the org ruleset "org-ci".
+# required on every repo's default-branch PRs by the org ruleset "bot-ci".
 # rulesets ignore trigger filters: this always runs on opened / synchronize / reopened.
-# staging previews only, exo-style (wrangler env.feature, <app>-<version>.touchlessapis.com),
-# with exo's CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID. production deploys need a
-# push-triggered workflow in the repo.
-name: org-ci
+# staging previews only, exo-style (wrangler env.feature, <app>-<version>.touchlessapis.com).
+# the checks job runs the PR's code and gets no secrets; it only bundles the previews.
+# the previews job never checks out the PR, refuses anything that isn't a preview, and is
+# the only job with exo's CLOUDFLARE_API_TOKEN. production deploys need a push-triggered
+# workflow in the repo.
+name: Build
 
 on:
   pull_request:
@@ -13,24 +15,43 @@ permissions:
   actions: read
   contents: read
   packages: read
-  pull-requests: write
 
 concurrency:
-  group: org-ci-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
+  group: bot-ci-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   checks:
-    name: org-ci
-    runs-on: ${{ vars.ORG_CI_RUNNER || 'ubicloud-standard-8' }}
+    name: Build
+    runs-on: ${{ vars.BOT_CI_RUNNER || vars.ORG_CI_RUNNER || 'ubicloud-standard-8' }}
     timeout-minutes: 30
+    outputs:
+      previews: ${{ steps.ci.outputs.previews }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: touchlesscode/org-ci/actions/ci@main
+          persist-credentials: false
+      - id: ci
+        uses: touchlesscode/bot-ci/actions/ci@main
         with:
           github-token: ${{ github.token }}
-          cloudflare-api-token: ${{ github.event.pull_request.head.repo.fork != true && secrets.CLOUDFLARE_API_TOKEN || '' }}
+          previews: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true && github.event.pull_request.user.login != 'dependabot[bot]' }}
+
+  previews:
+    name: Previews
+    needs: checks
+    if: needs.checks.outputs.previews == 'true'
+    runs-on: ${{ vars.BOT_CI_LIGHT_RUNNER || vars.ORG_CI_LIGHT_RUNNER || 'ubicloud-standard-2' }}
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: touchlesscode/bot-ci/actions/deploy-previews@main
+        with:
+          github-token: ${{ github.token }}
+          cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          app-secrets: ${{ github.event.pull_request.head.repo.fork != true && toJSON(secrets) || '{}' }}
+          app-secrets: ${{ toJSON(secrets) }}
+          preview-zone: ${{ vars.BOT_CI_PREVIEW_ZONE || vars.ORG_CI_PREVIEW_ZONE || 'touchlessapis.com' }}
