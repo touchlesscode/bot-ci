@@ -1,14 +1,17 @@
 name: Second Look (beta)
-description: "Second Look's steps outside the testers, in the private second-look repo's dispatched run. prepare: fetch the PR, open its check, wait for its previews and bundle its files and diff for the testers (never runs PR code). synthesize: the main reviewer, a read-only agent on the base branch that reads the PR's Jira ticket and linked designs, the code around the change and the repo's docs, reviews the diff, folds in both testers' reports, posts one sticky comment as the Touchless Bot and closes the check. abandon: closes the check when the run ended without a review."
+description: "Second Look's steps outside the testers, in the private second-look repo's dispatched run. prepare: fetch the PR, open its check, wait for its previews and bundle its files and diff for the testers (never runs PR code). synthesize: the main reviewer, a read-only agent on the base branch that reads the PR's Jira ticket and linked designs, the code around the change and the repo's docs, reviews the diff, folds in both testers' reports, leaves its findings as inline comments on the diff, posts one sticky summary comment and closes the check. abandon: closes the check and tells the PR when the run ended without a review."
 inputs:
   step:
     description: "prepare, synthesize or abandon"
     required: true
   github-token:
-    description: "a Touchless Bot App token for the PR's repo only. prepare: contents + pull-requests read, checks write; synthesize: contents read, checks write (and issues write only if post-token is blank); abandon: checks write"
-    required: true
+    description: "a Touchless Bot App token for the PR's repo only. prepare: contents + pull-requests read; synthesize: contents read, issues + pull-requests write (posting falls back to it when post-token is blank, and it re-requests clanker-in-chief after the inline review); abandon: issues write, for the didn't-finish reply when post-token is blank"
+    required: false
+  checks-token:
+    description: "a Touchless Bot App token with checks write on the PR's repo, minted on its own so a missing Checks permission only means no check. blank: no check"
+    required: false
   post-token:
-    description: "synthesize: clanker-in-chief's classic PAT (repo), so the review comment comes from that user. without it the App posts as touchless-bot[bot]"
+    description: "synthesize, abandon: clanker-in-chief's classic PAT (repo), so the review, its inline comments and the didn't-finish reply come from that user. without it the App posts as touchless-bot[bot]"
     required: false
   repository:
     description: "the PR's repo, owner/name"
@@ -27,6 +30,9 @@ inputs:
     required: false
   result:
     description: "abandon: the reviewer job's result (cancelled, failure, skipped)"
+    required: false
+  stage:
+    description: "abandon: where the run stopped, prepare or review"
     required: false
   preview-wait-minutes:
     description: "prepare: how long to wait for the head commit's preview deploys (default 10)"
@@ -81,11 +87,11 @@ runs:
         SECOND_LOOK_HEAD_SHA: ${{ inputs.head-sha }}
         SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
     - id: check
-      if: inputs.step == 'prepare'
+      if: inputs.step == 'prepare' && inputs.checks-token != ''
       shell: bash
       run: node "$GITHUB_ACTION_PATH/checkRun.ts" start
       env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ inputs.checks-token }}
         SECOND_LOOK_REPOSITORY: ${{ inputs.repository }}
         SECOND_LOOK_HEAD_SHA: ${{ steps.pull.outputs.head-sha }}
         SECOND_LOOK_REQUESTED_BY: ${{ inputs.requested-by }}
@@ -161,6 +167,7 @@ runs:
       run: node "$GITHUB_ACTION_PATH/synthesize.ts"
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        SECOND_LOOK_CHECKS_TOKEN: ${{ inputs.checks-token }}
         SECOND_LOOK_POST_TOKEN: ${{ inputs.post-token }}
         SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
         SECOND_LOOK_CHECK_RUN_ID: ${{ inputs.check-run-id }}
@@ -174,11 +181,21 @@ runs:
         SECOND_LOOK_BUDGET_USD: ${{ inputs.budget-usd }}
         SECOND_LOOK_REPORTS_DIRECTORY: ${{ runner.temp }}/second-look-reports
         SECOND_LOOK_DEFAULT_RULES: ${{ github.action_path }}/rules.md
-    - if: inputs.step == 'abandon'
+    - if: inputs.step == 'abandon' && inputs.checks-token != '' && inputs.check-run-id != ''
       shell: bash
       run: node "$GITHUB_ACTION_PATH/checkRun.ts" abandon
       env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ inputs.checks-token }}
         SECOND_LOOK_REPOSITORY: ${{ inputs.repository }}
         SECOND_LOOK_CHECK_RUN_ID: ${{ inputs.check-run-id }}
         SECOND_LOOK_RESULT: ${{ inputs.result }}
+    - if: inputs.step == 'abandon' && inputs.result != 'cancelled' && inputs.repository != ''
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/notifyUnfinished.ts"
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        SECOND_LOOK_POST_TOKEN: ${{ inputs.post-token }}
+        SECOND_LOOK_REPOSITORY: ${{ inputs.repository }}
+        SECOND_LOOK_NUMBER: ${{ inputs.number }}
+        SECOND_LOOK_RESULT: ${{ inputs.result }}
+        SECOND_LOOK_STAGE: ${{ inputs.stage }}

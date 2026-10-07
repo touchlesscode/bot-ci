@@ -12,8 +12,9 @@ const cellOf = (text: string, max = 300) => text.replace(/\r?\n/g, " ").replace(
 
 const locationOf = (file: string | null, line: number | null) => (file ? `\`${file}${line ? `:${line}` : ""}\` ` : "")
 
-const findingLineOf = (finding: Finding) =>
-  `- ${finding.severity === "block" ? "**block**" : "warn"} ${locationOf(finding.file, finding.line)}${finding.note} _(${finding.source})_`
+/** a finding's summary line; one that also sits on the diff says so, linking the review when there's a new one */
+const findingLineOf = (onDiff: ReadonlySet<Finding>, reviewUrl?: string) => (finding: Finding) =>
+  `- ${finding.severity === "block" ? "**block**" : "warn"} ${locationOf(finding.file, finding.line)}${finding.note} _(${finding.source})_${onDiff.has(finding) ? ` · ${reviewUrl ? `[on the diff](${reviewUrl})` : "on the diff"}` : ""}`
 
 /** "3 pass, 1 fail, 2 couldn't", or why the tester has nothing */
 const tallyOf = (report: AgentReport) => {
@@ -47,9 +48,10 @@ const headlineOf = (verdict: Verdict | undefined, enforcing: boolean) => {
  * the sticky comment: the verdict line, the main reviewer's summary, how the pr
  * matches its ticket, what was verified, tester disagreements and findings up top; each tester's steps and
  * the intended architecture it read collapsed below. `error` replaces the
- * verdict when the main reviewer didn't answer.
+ * verdict when the main reviewer didn't answer. findings in `onDiff` are also inline comments on the
+ * diff, in the review at `reviewUrl`.
  */
-export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel, harness, enforcing, headSha, scopeReason }: {
+export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel, harness, enforcing, headSha, scopeReason, onDiff = new Set(), reviewUrl }: {
   verdict?: Verdict
   error?: string
   reports: AgentReport[]
@@ -59,6 +61,8 @@ export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel
   enforcing: boolean
   headSha: string
   scopeReason: string
+  onDiff?: ReadonlySet<Finding>
+  reviewUrl?: string
 }) => {
   const cost = reports.reduce((total, report) => total + (report.costUsd ?? 0), 0)
   const lines = [
@@ -69,7 +73,7 @@ export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel
     ...(verdict?.intent.length ? ["", "**Against the ticket**", ...verdict.intent.map((line) => `- ${line}`)] : []),
     ...(verdict?.tested.length ? ["", "**What was verified**", ...verdict.tested.map((line) => `- ${line}`)] : []),
     ...(verdict?.disagreements.length ? ["", "**Where the testers disagree**", ...verdict.disagreements.map((line) => `- ${line}`)] : []),
-    ...(verdict?.findings.length ? ["", "**Findings**", ...verdict.findings.map(findingLineOf)] : []),
+    ...(verdict?.findings.length ? ["", "**Findings**", ...verdict.findings.map(findingLineOf(onDiff, reviewUrl))] : []),
     "",
     ...reports.flatMap(reportSectionOf),
     ...(verdict?.intendedArchitecture.length ? ["<details><summary>Intended architecture, as read from the docs</summary>", "", ...verdict.intendedArchitecture.map((line) => `- ${line}`), "", "</details>"] : []),

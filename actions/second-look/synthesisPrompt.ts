@@ -41,6 +41,7 @@ Verdict:
 - "block" only for a clear mismatch with the ticket, a failure this change causes, a rule violation, unsafe data or auth handling, or a clear contradiction of the documented architecture or the repo's conventions.
 - Style nits are "warn", or leave them out. Don't pad: a short review of a good PR is a good review.
 - Every finding names its source: the ticket ("EXO-1234"), a design, a doc path and heading (for example "docs/ARCHITECTURE.md › Data access"), an existing pattern ("like src/api/users.ts"), "rules.md", "testing (openai)" or "testing (anthropic)", or "general judgement".
+- Findings become inline comments on the PR's diff, so pin each one to the line it's about: \`file\` is the repo-relative path as the diff shows it (after \`b/\`), \`line\` is that line's number in the PR's version of the file (the \`+\` side of the hunk), on an added or context line inside a hunk. A line outside the diff can't be commented on and only shows in the summary. Use \`file\` with a null \`line\`, or both null, only for findings about a whole file or the PR as a whole. One finding per spot: split a finding that covers several places, and write the note so it reads on its own next to that line.
 
 Answer with JSON only, in the given schema:
 - summary: 2-3 sentences;
