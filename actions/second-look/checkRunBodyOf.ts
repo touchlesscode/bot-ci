@@ -11,7 +11,7 @@ export const checkStartOf = ({ headSha, detailsUrl, requestedBy }: { headSha: st
   details_url: detailsUrl,
   output: {
     title: "Reviewing",
-    summary: `${requestedBy ? `Requested by @${requestedBy}. ` : ""}An OpenAI and an Anthropic tester try the PR's test plan against its previews, then a main reviewer checks the change against its ticket and the repo's docs. The review lands as a comment on the PR in about 20-30 minutes.`,
+    summary: `${requestedBy ? `Requested by @${requestedBy}. ` : ""}An OpenAI and an Anthropic tester try the PR's test plan by hand (on its previews, canary packages or a sandbox build), then a main reviewer checks the change against its ticket and the repo's docs. The review lands as a comment on the PR in about 20-30 minutes.`,
   },
 })
 

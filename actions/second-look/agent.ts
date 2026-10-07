@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * second look, step 2 (one job per family): a tester agent in a snapshot of the
- * pr's files follows the pr's test plan (against its previews when they're up,
+ * pr's files follows the pr's test plan (against its previews or canary packages when it has them,
  * see awaitPreviews.ts), then its report is written for the main reviewer. never fails the job: no key, a
  * crash or a timeout become a report that says so.
  *

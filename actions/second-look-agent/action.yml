@@ -1,5 +1,5 @@
 name: Second Look (beta) tester
-description: "One Second Look tester (Codex for openai, Claude Code for anthropic) in a snapshot of the PR's files from prepare's bundle: follows the PR's test plan by hand against its previews (never test suites; CI runs those), then uploads its report for the main reviewer. Gets no GitHub token for the PR's repo. Never fails the job."
+description: "One Second Look tester (Codex for openai, Claude Code for anthropic) in a snapshot of the PR's files from prepare's bundle: follows the PR's test plan by hand against its previews, canary packages or a sandbox build (never test suites; CI runs those), then uploads its report for the main reviewer. Gets no GitHub token for the PR's repo. Never fails the job."
 inputs:
   family:
     description: "openai or anthropic"

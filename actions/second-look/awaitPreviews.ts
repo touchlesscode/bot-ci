@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * second look, in prepare (before the testers start): waits (up to SECOND_LOOK_PREVIEW_WAIT_MINUTES, default 10) for the head
- * commit's preview deploys to finish, then lists the previews in the pr description and whether each answers.
- * the tester tests against those instead of running the app itself. never fails the job.
+ * commit's preview deploys to finish, then lists the previews in the pr description and whether each answers,
+ * plus the pr's canary release when it has one (packages have no preview; none is required). the tester tests
+ * against those instead of running the app itself. never fails the job.
  *
  *   node awaitPreviews.ts
  *
@@ -12,6 +13,7 @@
 import { mkdirSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { setTimeout as sleepFor } from "node:timers/promises"
+import { canaryReleaseOf, type CanaryRelease } from "./canaryReleaseOf.ts"
 import { pendingPreviewChecksOf, type CheckRun } from "./pendingPreviewChecksOf.ts"
 import { previewLinksOf, type PreviewLink } from "./previewLinksOf.ts"
 import { targetOf } from "./targetOf.ts"
@@ -19,8 +21,11 @@ import { targetOf } from "./targetOf.ts"
 /** a preview and what it answered (an http status, or why it didn't) */
 export type ProbedPreview = PreviewLink & { answered: string }
 
-/** what the tester is told about previews */
-export type PreviewsFile = { previews: ProbedPreview[]; note: string }
+/** a canary release, and whether it was published from the pr's head commit */
+export type ListedCanary = CanaryRelease & { fromHead: boolean }
+
+/** what the tester is told about what's deployed or published for this pr: previews, and a canary for packages */
+export type PreviewsFile = { previews: ProbedPreview[]; note: string; canary?: ListedCanary }
 
 type Get = (path: string) => Promise<unknown>
 
@@ -58,6 +63,7 @@ const main = async () => {
     mkdirSync(dirname(output), { recursive: true })
     writeFileSync(output, JSON.stringify(file, null, 2))
     console.log(`previews: ${file.note}; ${file.previews.map((preview) => `${preview.label} ${preview.url} (${preview.answered})`).join(", ") || "none listed"}`)
+    if (file.canary) console.log(`canary: ${file.canary.packages.join(" ")}${file.canary.fromHead ? " (from the head commit)" : " (from an earlier commit)"}`)
   }
   try {
     const { repository, pull } = targetOf()
@@ -71,7 +77,8 @@ const main = async () => {
     const note = await awaitPreviewChecks({ get, repository, sha: pull.head.sha, waitMs })
     const { body } = (await get(`/repos/${repository}/pulls/${pull.number}`)) as { body?: string | null }
     const previews = await Promise.all(previewLinksOf(body).map(async (link) => ({ ...link, answered: await probe(link.url) })))
-    write({ previews, note })
+    const canary = canaryReleaseOf(body)
+    write({ previews, note, ...(canary ? { canary: { ...canary, fromHead: canary.publishedSha === pull.head.sha } } : {}) })
   } catch (error) {
     write({ previews: [], note: `couldn't look for previews: ${(error as Error).message}` })
   }
