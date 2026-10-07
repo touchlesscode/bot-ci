@@ -1,5 +1,6 @@
 import { replyToThread } from "./replyToThread.ts"
 import { resolveThread } from "./resolveThread.ts"
+import { threadKeysLinkedOf } from "./threadKeysLinkedOf.ts"
 import { fixedReplyOf, sameSpotReplyOf, updateReplyOf } from "./threadReplyOf.ts"
 import type { EarlierThread, Finding, ThreadFollowUp, ThreadStatus } from "./types.ts"
 
@@ -25,11 +26,12 @@ export const followUpThreads = async ({ threads, followUps, onThread, headSha, t
   fetchImpl?: typeof fetch
 }): Promise<ThreadOutcome[]> => {
   const reply = (thread: EarlierThread, body: string) => replyToThread({ token, repository, number, commentId: thread.commentId, body, fetchImpl })
+  const linked = threadKeysLinkedOf(threads)
   const outcomes: ThreadOutcome[] = []
   for (const thread of threads) {
     const call = followUps.find((followUp) => followUp.thread === thread.key)
     const status = call?.status === "update" && !call.note.trim() ? "open" : call?.status ?? "open"
-    const note = call?.note ?? ""
+    const note = linked(call?.note ?? "")
     let resolved = false
     try {
       if (status === "update") await reply(thread, updateReplyOf({ note, headSha }))

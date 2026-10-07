@@ -1,4 +1,6 @@
+import { firstSentenceOf } from "./firstSentenceOf.ts"
 import type { ThreadOutcome } from "./followUpThreads.ts"
+import { threadKeysLinkedOf } from "./threadKeysLinkedOf.ts"
 import type { AgentReport, Family, Finding, Harness, Verdict } from "./types.ts"
 
 export const commentMarker = "<!-- touchless-second-look -->"
@@ -14,15 +16,15 @@ const cellOf = (text: string, max = 300) => text.replace(/\r?\n/g, " ").replace(
 const locationOf = (file: string | null, line: number | null) => (file ? `\`${file}${line ? `:${line}` : ""}\` ` : "")
 
 /** a finding's summary line; one that also sits on the diff says so, linking the review when there's a new one */
-const findingLineOf = (onDiff: ReadonlySet<Finding>, reviewUrl?: string) => (finding: Finding) =>
-  `- ${finding.severity === "block" ? "**block**" : "warn"} ${locationOf(finding.file, finding.line)}${finding.note} _(${finding.source})_${onDiff.has(finding) ? ` · ${reviewUrl ? `[on the diff](${reviewUrl})` : "on the diff"}` : ""}`
+const findingLineOf = (onDiff: ReadonlySet<Finding>, linked: (text: string) => string, reviewUrl?: string) => (finding: Finding) =>
+  `- ${finding.severity === "block" ? "**block**" : "warn"} ${locationOf(finding.file, finding.line)}${linked(finding.note)} _(${finding.source})_${onDiff.has(finding) ? ` · ${reviewUrl ? `[on the diff](${reviewUrl})` : "on the diff"}` : ""}`
 
 /** an earlier thread's line in the summary: fixed (and whether it got resolved) or still open, linking the thread */
-const followUpLineOf = ({ thread, status, note, resolved }: ThreadOutcome) => {
+const followUpLineOf = (linked: (text: string) => string) => ({ thread, status, note, resolved }: ThreadOutcome) => {
   const where = `\`${thread.path}${!thread.outdated && thread.line ? `:${thread.line}` : ""}\``
   const link = `[thread](${thread.url})`
-  if (status === "fixed") return `- fixed ${where} ${cellOf(note || thread.finding, 200)} · ${link}${resolved ? " (resolved)" : ""}`
-  return `- still open ${where} ${cellOf(thread.finding.split(/(?<=\.)\s/)[0], 200)} · ${link}${status === "update" ? " (replied)" : ""}`
+  if (status === "fixed") return `- fixed ${where} ${cellOf(linked(note || firstSentenceOf(thread.finding)), 300)} · ${link}${resolved ? " (resolved)" : ""}`
+  return `- still open ${where} ${cellOf(firstSentenceOf(thread.finding), 300)} · ${link}${status === "update" ? " (replied)" : ""}`
 }
 
 /** "3 pass, 1 fail, 2 couldn't", or why the tester has nothing */
@@ -75,16 +77,18 @@ export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel
   followUps?: ThreadOutcome[]
 }) => {
   const cost = reports.reduce((total, report) => total + (report.costUsd ?? 0), 0)
+  const linked = threadKeysLinkedOf(followUps.map(({ thread }) => thread))
+  const bulletOf = (line: string) => `- ${linked(line)}`
   const lines = [
     commentMarker,
     `**Second Look (beta): ${headlineOf(verdict, enforcing)}**${enforcing ? "" : " · advisory, doesn't fail the check"}`,
     "",
-    verdict ? verdict.summary : `The main reviewer didn't answer: ${error ?? "unknown error"}. The testers' reports are below.`,
-    ...(verdict?.intent.length ? ["", "**Against the ticket**", ...verdict.intent.map((line) => `- ${line}`)] : []),
-    ...(verdict?.tested.length ? ["", "**What was verified**", ...verdict.tested.map((line) => `- ${line}`)] : []),
-    ...(verdict?.disagreements.length ? ["", "**Where the testers disagree**", ...verdict.disagreements.map((line) => `- ${line}`)] : []),
-    ...(verdict?.findings.length ? ["", followUps.length ? "**New findings**" : "**Findings**", ...verdict.findings.map(findingLineOf(onDiff, reviewUrl))] : []),
-    ...(followUps.length ? ["", "**Since the last look**", ...[...followUps].sort((a, b) => Number(b.status === "fixed") - Number(a.status === "fixed")).map(followUpLineOf)] : []),
+    verdict ? linked(verdict.summary) : `The main reviewer didn't answer: ${error ?? "unknown error"}. The testers' reports are below.`,
+    ...(verdict?.intent.length ? ["", "**Against the ticket**", ...verdict.intent.map(bulletOf)] : []),
+    ...(verdict?.tested.length ? ["", "**What was verified**", ...verdict.tested.map(bulletOf)] : []),
+    ...(verdict?.disagreements.length ? ["", "**Where the testers disagree**", ...verdict.disagreements.map(bulletOf)] : []),
+    ...(verdict?.findings.length ? ["", followUps.length ? "**New findings**" : "**Findings**", ...verdict.findings.map(findingLineOf(onDiff, linked, reviewUrl))] : []),
+    ...(followUps.length ? ["", "**Since the last look**", ...[...followUps].sort((a, b) => Number(b.status === "fixed") - Number(a.status === "fixed")).map(followUpLineOf(linked))] : []),
     "",
     ...reports.flatMap(reportSectionOf),
     ...(verdict?.intendedArchitecture.length ? ["<details><summary>Intended architecture, as read from the docs</summary>", "", ...verdict.intendedArchitecture.map((line) => `- ${line}`), "", "</details>"] : []),
