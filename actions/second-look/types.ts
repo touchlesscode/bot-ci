@@ -37,6 +37,26 @@ export type AgentReport = {
 /** one finding in the main reviewer's verdict; `source` is the doc, rule or tester it rests on */
 export type Finding = { file: string | null; line: number | null; severity: "block" | "warn"; note: string; source: string }
 
+/** fixed: the head no longer has the issue; open: still there, nothing new to say; update: still there, with something new */
+export type ThreadStatus = "fixed" | "open" | "update"
+
+/** the reviewer's call on one earlier thread, by its prompt key (`T1`…); `note` is the reply, blank for open */
+export type ThreadFollowUp = { thread: string; status: ThreadStatus; note: string }
+
+/** an unresolved inline thread an earlier second look run started on the pr */
+export type EarlierThread = {
+  key: string
+  id: string
+  commentId: number
+  url: string
+  path: string
+  line: number | null
+  originalLine: number | null
+  outdated: boolean
+  finding: string
+  replies: { author: string; body: string }[]
+}
+
 /** the main reviewer's answer */
 export type Verdict = {
   verdict: "pass" | "block"
@@ -46,6 +66,7 @@ export type Verdict = {
   tested: string[]
   disagreements: string[]
   findings: Finding[]
+  earlier: ThreadFollowUp[]
 }
 
 /** read-only view of a checked-out repo, injectable for tests */

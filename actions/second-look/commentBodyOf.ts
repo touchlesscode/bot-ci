@@ -1,3 +1,4 @@
+import type { ThreadOutcome } from "./followUpThreads.ts"
 import type { AgentReport, Family, Finding, Harness, Verdict } from "./types.ts"
 
 export const commentMarker = "<!-- touchless-second-look -->"
@@ -15,6 +16,14 @@ const locationOf = (file: string | null, line: number | null) => (file ? `\`${fi
 /** a finding's summary line; one that also sits on the diff says so, linking the review when there's a new one */
 const findingLineOf = (onDiff: ReadonlySet<Finding>, reviewUrl?: string) => (finding: Finding) =>
   `- ${finding.severity === "block" ? "**block**" : "warn"} ${locationOf(finding.file, finding.line)}${finding.note} _(${finding.source})_${onDiff.has(finding) ? ` · ${reviewUrl ? `[on the diff](${reviewUrl})` : "on the diff"}` : ""}`
+
+/** an earlier thread's line in the summary: fixed (and whether it got resolved) or still open, linking the thread */
+const followUpLineOf = ({ thread, status, note, resolved }: ThreadOutcome) => {
+  const where = `\`${thread.path}${!thread.outdated && thread.line ? `:${thread.line}` : ""}\``
+  const link = `[thread](${thread.url})`
+  if (status === "fixed") return `- fixed ${where} ${cellOf(note || thread.finding, 200)} · ${link}${resolved ? " (resolved)" : ""}`
+  return `- still open ${where} ${cellOf(thread.finding.split(/(?<=\.)\s/)[0], 200)} · ${link}${status === "update" ? " (replied)" : ""}`
+}
 
 /** "3 pass, 1 fail, 2 couldn't", or why the tester has nothing */
 const tallyOf = (report: AgentReport) => {
@@ -49,9 +58,9 @@ const headlineOf = (verdict: Verdict | undefined, enforcing: boolean) => {
  * matches its ticket, what was verified, tester disagreements and findings up top; each tester's steps and
  * the intended architecture it read collapsed below. `error` replaces the
  * verdict when the main reviewer didn't answer. findings in `onDiff` are also inline comments on the
- * diff, in the review at `reviewUrl`.
+ * diff, in the review at `reviewUrl`. `followUps` are earlier runs' threads: what got fixed, what's still open.
  */
-export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel, harness, enforcing, headSha, scopeReason, onDiff = new Set(), reviewUrl }: {
+export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel, harness, enforcing, headSha, scopeReason, onDiff = new Set(), reviewUrl, followUps = [] }: {
   verdict?: Verdict
   error?: string
   reports: AgentReport[]
@@ -63,6 +72,7 @@ export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel
   scopeReason: string
   onDiff?: ReadonlySet<Finding>
   reviewUrl?: string
+  followUps?: ThreadOutcome[]
 }) => {
   const cost = reports.reduce((total, report) => total + (report.costUsd ?? 0), 0)
   const lines = [
@@ -73,7 +83,8 @@ export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel
     ...(verdict?.intent.length ? ["", "**Against the ticket**", ...verdict.intent.map((line) => `- ${line}`)] : []),
     ...(verdict?.tested.length ? ["", "**What was verified**", ...verdict.tested.map((line) => `- ${line}`)] : []),
     ...(verdict?.disagreements.length ? ["", "**Where the testers disagree**", ...verdict.disagreements.map((line) => `- ${line}`)] : []),
-    ...(verdict?.findings.length ? ["", "**Findings**", ...verdict.findings.map(findingLineOf(onDiff, reviewUrl))] : []),
+    ...(verdict?.findings.length ? ["", followUps.length ? "**New findings**" : "**Findings**", ...verdict.findings.map(findingLineOf(onDiff, reviewUrl))] : []),
+    ...(followUps.length ? ["", "**Since the last look**", ...[...followUps].sort((a, b) => Number(b.status === "fixed") - Number(a.status === "fixed")).map(followUpLineOf)] : []),
     "",
     ...reports.flatMap(reportSectionOf),
     ...(verdict?.intendedArchitecture.length ? ["<details><summary>Intended architecture, as read from the docs</summary>", "", ...verdict.intendedArchitecture.map((line) => `- ${line}`), "", "</details>"] : []),

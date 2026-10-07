@@ -29,4 +29,8 @@ export const verdictSchema = strictObject({
     type: "array",
     items: strictObject({ file: nullableString, line: nullableLine, severity: { type: "string", enum: ["block", "warn"] }, note: { type: "string" }, source: { type: "string" } }),
   },
+  earlier: {
+    type: "array",
+    items: strictObject({ thread: { type: "string" }, status: { type: "string", enum: ["fixed", "open", "update"] }, note: { type: "string" } }),
+  },
 })

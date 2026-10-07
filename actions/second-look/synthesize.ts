@@ -4,9 +4,11 @@
  * branch, with the ticket and designs gatherContext.ts read, it learns what the
  * pr is for and the code around it, reads the repo's docs for the intended
  * architecture, reviews the diff against all that and the rules, folds in both
- * testers' reports, leaves the findings that sit on the diff as inline review comments,
- * posts one sticky pr comment as clanker-in-chief and closes the pr's check with the
- * outcome. it never runs pr code. advisory by default:
+ * testers' reports, and follows up on its own open threads from earlier runs: a fixed one
+ * gets a reply and is resolved, a changed one gets a reply, and nothing is posted twice.
+ * new findings that sit on the diff become inline review comments; then it posts one sticky
+ * pr comment as clanker-in-chief and closes the pr's check with the outcome. it never runs
+ * pr code. advisory by default:
  * a block turns the pr's check red only with SECOND_LOOK_MODE=enforce. exits 1 only
  * when it crashes before closing the check, so the workflow's wrap-up closes it instead.
  *
@@ -32,11 +34,19 @@ import { commentableLinesOf } from "./commentableLinesOf.ts"
 import { directorySnapshot } from "./directorySnapshot.ts"
 import { finalMessageOf } from "./finalMessageOf.ts"
 import { cappedDiffOf, gitDiffOf } from "./gitDiffOf.ts"
+import { earlierSectionOf } from "./earlierSectionOf.ts"
+import { earlierThreadsOf } from "./earlierThreadsOf.ts"
+import { followUpThreads } from "./followUpThreads.ts"
 import { harnessOf } from "./harnessOf.ts"
 import { inlineCommentsOf } from "./inlineCommentsOf.ts"
 import { isEnforcing } from "./isEnforcing.ts"
+import { isRequestedReviewer } from "./isRequestedReviewer.ts"
 import { postInlineReview } from "./postInlineReview.ts"
 import { postStickyComment } from "./postStickyComment.ts"
+import { requestReviewer } from "./requestReviewer.ts"
+import { routeFindingsOf } from "./routeFindingsOf.ts"
+import type { EarlierThread } from "./types.ts"
+import { writeHeadFiles } from "./writeHeadFiles.ts"
 import { prepareAuth } from "./prepareAuth.ts"
 import { storedReportOf } from "./reportOf.ts"
 import { reviewerFamilyOf } from "./reviewerFamilyOf.ts"
@@ -107,6 +117,15 @@ const main = async () => {
   const capped = cappedDiffOf(diff, maxPromptDiffChars)
   const harness = harnessOf(pull.body)
   const reviewer = reviewerFamilyOf(harness, { anthropic: Boolean(keyOf("anthropic")), openai: Boolean(keyOf("openai")) })
+  const postToken = process.env.SECOND_LOOK_POST_TOKEN || process.env.GITHUB_TOKEN || ""
+  const appToken = process.env.GITHUB_TOKEN || postToken
+  const checkToken = process.env.SECOND_LOOK_CHECKS_TOKEN || ""
+  const author = process.env.SECOND_LOOK_POST_TOKEN ? posterLogin : appLogin
+  const threads: EarlierThread[] = await earlierThreadsOf({ token: postToken, repository, number: pull.number, author }).catch((failure: Error) => {
+    console.log(`::warning title=Second Look (beta)::couldn't read earlier threads, so none get followed up: ${failure.message}`)
+    return []
+  })
+  const headFiles = writeHeadFiles({ head: pull.head.sha, paths: threads.map((thread) => thread.path), directory: join(inputs, "head") })
   const prompt = synthesisPromptOf({
     repository,
     pull,
@@ -119,26 +138,26 @@ const main = async () => {
     rules: rulesOf([...repoRulePaths, process.env.SECOND_LOOK_DEFAULT_RULES]),
     reports,
     context: existsSync(contextPath) ? readFileSync(contextPath, "utf8") : "",
+    earlier: earlierSectionOf({ threads, headFiles }),
   })
   const { verdict, error } = await review({ reviewer, prompt }).catch((failure: Error) => ({ verdict: undefined, error: failure.message }))
   const enforcing = isEnforcing(process.env.SECOND_LOOK_MODE)
-  const postToken = process.env.SECOND_LOOK_POST_TOKEN || process.env.GITHUB_TOKEN || ""
-  const appToken = process.env.GITHUB_TOKEN || postToken
-  const checkToken = process.env.SECOND_LOOK_CHECKS_TOKEN || ""
-  const author = process.env.SECOND_LOOK_POST_TOKEN ? posterLogin : appLogin
+  const warn = (line: string) => console.log(`::warning title=Second Look (beta)::${line}`)
+  const wasRequested = await isRequestedReviewer({ token: appToken, repository, number: pull.number, login: author })
   const { inline } = inlineCommentsOf({ findings: verdict?.findings ?? [], commentable: commentableLinesOf(diff) })
-  const reviewBody = `**Second Look (beta)** · ${inline.length} finding${inline.length === 1 ? "" : "s"} on the diff at \`${pull.head.sha.slice(0, 7)}\`. The verdict, how it matches the ticket and what the testers verified are in the Second Look comment on this PR.`
-  const inlineReview = await postInlineReview({ token: postToken, requestToken: appToken, repository, number: pull.number, commitId: pull.head.sha, comments: inline.map(({ comment }) => comment), body: reviewBody, author })
-    .then((posted) => {
-      if (posted.url) console.log(`second look inline review: ${posted.url}`)
-      if (posted.warning) console.log(`::warning title=Second Look (beta)::${posted.warning}`)
-      return { ...posted, onDiff: new Set(inline.map(({ finding }) => finding)) }
-    })
+  const { fresh, onThread } = routeFindingsOf({ inline, threads })
+  const reviewBody = `**Second Look (beta)** · ${fresh.length} new finding${fresh.length === 1 ? "" : "s"} on the diff at \`${pull.head.sha.slice(0, 7)}\`. The verdict, how it matches the ticket, what's fixed since the last look and what the testers verified are in the Second Look comment on this PR.`
+  const reviewUrl = await postInlineReview({ token: postToken, repository, number: pull.number, commitId: pull.head.sha, comments: fresh.map(({ comment }) => comment), body: reviewBody })
     .catch((failure: Error) => {
-      console.log(`::warning title=Second Look (beta)::couldn't post the inline comments, the summary has every finding: ${failure.message}`)
-      return { url: undefined, onDiff: new Set<never>() }
+      warn(`couldn't post the inline comments, the summary has every finding: ${failure.message}`)
+      return undefined
     })
-  const body = commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, enforcing, headSha: pull.head.sha, scopeReason: process.env.SECOND_LOOK_REQUESTED_BY ? `requested by @${process.env.SECOND_LOOK_REQUESTED_BY}` : "requested", onDiff: inlineReview.onDiff, reviewUrl: inlineReview.url })
+  if (reviewUrl) console.log(`second look inline review: ${reviewUrl}`)
+  const onDiff = new Set(reviewUrl ? fresh.map(({ finding }) => finding) : [])
+  const followUps = verdict ? await followUpThreads({ threads, followUps: verdict.earlier, onThread, headSha: pull.head.sha, token: postToken, resolveTokens: [postToken, appToken], repository, number: pull.number, warn }) : []
+  const replied = followUps.some(({ status }) => status !== "open") || onThread.length > 0
+  if (wasRequested && (reviewUrl || replied)) await requestReviewer({ token: appToken, repository, number: pull.number, login: author }).catch((failure: Error) => warn(failure.message))
+  const body = commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, enforcing, headSha: pull.head.sha, scopeReason: process.env.SECOND_LOOK_REQUESTED_BY ? `requested by @${process.env.SECOND_LOOK_REQUESTED_BY}` : "requested", onDiff, reviewUrl, followUps })
   console.log(body)
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${body}\n`)
   const commentUrl = await postStickyComment({ token: postToken, repository, number: pull.number, body, marker: commentMarker, author })
