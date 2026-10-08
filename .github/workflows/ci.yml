@@ -1,7 +1,8 @@
 # required on every repo's default-branch PRs by the org ruleset "bot-ci".
 # rulesets ignore trigger filters: this always runs on opened / synchronize / reopened.
 # staging previews only, exo-style (wrangler env.feature, <app>-<version>.touchlessapis.com).
-# the checks job runs the PR's code and gets no secrets; it only bundles the previews.
+# the checks job runs the PR's code; its one secret, PACKAGES_READ_TOKEN (read:packages for
+# @touchlesscode/*), only reaches the scripts-off install after npmrcGuard. it bundles the previews.
 # the previews job never checks out the PR, refuses anything that isn't a preview, and is
 # the only job with exo's CLOUDFLARE_API_TOKEN. production deploys need a push-triggered
 # workflow in the repo.
@@ -36,6 +37,7 @@ jobs:
         uses: touchlesscode/bot-ci/actions/ci@main
         with:
           github-token: ${{ github.token }}
+          packages-token: ${{ secrets.PACKAGES_READ_TOKEN }}
           previews: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true && github.event.pull_request.user.login != 'dependabot[bot]' }}
 
   previews:

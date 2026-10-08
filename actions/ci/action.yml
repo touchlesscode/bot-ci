@@ -1,8 +1,12 @@
 name: bot-ci build
-description: For repos with no pull request CI of their own — exo's pipeline (nx affected, pnpm cache, GitHub Packages) or the repo's own scripts, then bundles exo-style staging previews (wrangler env.feature) of affected Cloudflare Worker apps for the previews job. Runs the PR's code, so it gets no secrets
+description: For repos with no pull request CI of their own — exo's pipeline (nx affected, pnpm cache, GitHub Packages) or the repo's own scripts, then bundles exo-style staging previews (wrangler env.feature) of affected Cloudflare Worker apps for the previews job. Runs the PR's code, so its only secret is the packages read token, and only in the scripts-off install
 inputs:
   github-token:
     required: true
+  packages-token:
+    description: "PACKAGES_READ_TOKEN: a read:packages classic PAT for @touchlesscode/*, given only to a scripts-off pnpm/npm install after npmrcGuard. empty falls back to github-token"
+    required: false
+    default: ""
   previews:
     description: "'true' to bundle previews (same-repo pull requests, not dependabot)"
     required: false
@@ -37,13 +41,22 @@ runs:
         cache: ${{ steps.plan.outputs.cache }}
         registry-url: https://npm.pkg.github.com
         scope: "@touchlesscode"
+    - id: guard
+      if: steps.plan.outputs.skip != 'true' && steps.plan.outputs.packages-token == 'true' && inputs.packages-token != ''
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/npmrcGuard.ts"
     - if: steps.plan.outputs.skip != 'true'
       shell: bash
       env:
         INSTALL: ${{ steps.plan.outputs.install }}
+        NODE_AUTH_TOKEN: ${{ steps.guard.outcome == 'success' && inputs.packages-token || inputs.github-token }}
+      run: bash "$GITHUB_ACTION_PATH/runChecks.sh" install
+    - if: steps.plan.outputs.skip != 'true'
+      shell: bash
+      env:
+        POSTINSTALL: ${{ steps.plan.outputs.postinstall }}
         CHECKS: ${{ steps.plan.outputs.checks }}
-        NODE_AUTH_TOKEN: ${{ inputs.github-token }}
-      run: bash "$GITHUB_ACTION_PATH/runChecks.sh"
+      run: bash "$GITHUB_ACTION_PATH/runChecks.sh" checks
     - id: bundle
       if: steps.plan.outputs.skip != 'true' && github.event_name == 'pull_request' && inputs.previews == 'true'
       shell: bash

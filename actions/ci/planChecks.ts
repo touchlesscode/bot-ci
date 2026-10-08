@@ -29,6 +29,10 @@ export type CheckPlan =
       nodeVersion?: string
       nodeVersionFile?: string
       install: string
+      /** lifecycle scripts the install skipped, run after it without the packages token */
+      postinstall: string
+      /** the install may get PACKAGES_READ_TOKEN: only pnpm and npm, whose installs run no repo code with scripts off */
+      packagesToken: boolean
       checks: Check[]
     }
 
@@ -62,12 +66,24 @@ export const packageManagerOf = (repo: RepoSnapshot, packageJson: PackageJson): 
   return { packageManager, locked: lockfiles.find(([manager]) => manager === packageManager)![1].some((file) => repo.exists(file)) }
 }
 
-/** the install command; pnpm itself comes from pnpm/action-setup, yarn from corepack */
+/**
+ * the install command; pnpm itself comes from pnpm/action-setup, yarn from corepack. pnpm and npm
+ * install with lifecycle scripts (and pnpm's .pnpmfile.cjs) off, because they get the packages
+ * token; postinstallOf runs the skipped scripts afterwards, without it.
+ */
 export const installCommandOf = (packageManager: PackageManager, locked: boolean, yarnBerry: boolean) => {
-  if (packageManager === "pnpm") return `pnpm install${locked ? " --frozen-lockfile" : ""}`
+  if (packageManager === "pnpm") return `pnpm install${locked ? " --frozen-lockfile" : ""} --ignore-scripts --ignore-pnpmfile`
   if (packageManager === "yarn") return `corepack enable && yarn install${locked ? (yarnBerry ? " --immutable" : " --frozen-lockfile") : ""}`
   if (packageManager === "bun") return `npm install -g bun && bun install${locked ? " --frozen-lockfile" : ""}`
-  return locked ? "npm ci --no-audit --no-fund" : "npm install --no-audit --no-fund"
+  return locked ? "npm ci --ignore-scripts --no-audit --no-fund" : "npm install --ignore-scripts --no-audit --no-fund"
+}
+
+const rootLifecycleScripts = ["preinstall", "install", "postinstall", "prepare"]
+
+/** the dependency build scripts and the root's own install lifecycle that a scripts-off install skipped */
+export const postinstallOf = (packageManager: PackageManager, scripts: Record<string, string> = {}) => {
+  if (packageManager !== "pnpm" && packageManager !== "npm") return ""
+  return [`${packageManager} rebuild`, ...rootLifecycleScripts.filter((script) => scripts[script]).map((script) => `${packageManager} run ${script}`)].join(" && ")
 }
 
 /** how to run a locally installed binary with each package manager */
@@ -107,7 +123,7 @@ export const planChecks = (repo: RepoSnapshot): CheckPlan => {
   try {
     packageJson = JSON.parse(text) as PackageJson
   } catch {
-    return { skip: false, reason: "package.json doesn't parse", packageManager: "npm", locked: false, nx: false, nodeVersion: "24", install: "node -e \"JSON.parse(require('fs').readFileSync('package.json','utf8'))\"", checks: [] }
+    return { skip: false, reason: "package.json doesn't parse", packageManager: "npm", locked: false, nx: false, nodeVersion: "24", install: "node -e \"JSON.parse(require('fs').readFileSync('package.json','utf8'))\"", postinstall: "", packagesToken: false, checks: [] }
   }
   const { packageManager, locked } = packageManagerOf(repo, packageJson)
   const nx = repo.exists("nx.json")
@@ -124,6 +140,8 @@ export const planChecks = (repo: RepoSnapshot): CheckPlan => {
     ...(packageManager === "pnpm" && !packageJson.packageManager ? { pnpmVersion: defaultPnpmVersion } : {}),
     ...nodeVersionOf(repo, packageJson),
     install: installCommandOf(packageManager, locked, repo.exists(".yarnrc.yml")),
+    postinstall: postinstallOf(packageManager, packageJson.scripts),
+    packagesToken: packageManager === "pnpm" || packageManager === "npm",
     checks,
   }
 }
@@ -147,6 +165,8 @@ export const outputLinesOf = (plan: CheckPlan) => [
     `node-version=${plan.nodeVersion ?? ""}`,
     `node-version-file=${plan.nodeVersionFile ?? ""}`,
     `install=${plan.install}`,
+    `postinstall=${plan.postinstall}`,
+    `packages-token=${plan.packagesToken}`,
     "checks<<BOT_CI_CHECKS",
     ...plan.checks.map((check) => `${check.name}\t${check.command}`),
     "BOT_CI_CHECKS",
