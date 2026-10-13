@@ -17,13 +17,13 @@ export const checkStartOf = ({ headSha, detailsUrl, requestedBy }: { headSha: st
 
 /**
  * the body that closes the check with the review's outcome: a pass is green and anything else
- * neutral, unless enforcing, where a block or a failed review is red
+ * neutral, unless enforcing, where a block (the review requests changes either way) or a failed review is red
  */
 export const checkEndOf = ({ verdict, error, enforcing, commentUrl }: { verdict?: Verdict; error?: string; enforcing: boolean; commentUrl?: string }) => {
   const link = commentUrl ? `\n\n[The review](${commentUrl})` : ""
   if (error || !verdict) return { status: "completed", conclusion: enforcing ? "failure" : "neutral", output: { title: "Couldn't review", summary: `${error ?? "no verdict"}${link}` } }
-  if (verdict.verdict === "pass") return { status: "completed", conclusion: "success", output: { title: "Looks good", summary: `${verdict.summary}${link}` } }
-  return { status: "completed", conclusion: enforcing ? "failure" : "neutral", output: { title: enforcing ? "Blocks this PR" : "Would block (advisory)", summary: `${verdict.summary}${link}` } }
+  if (verdict.verdict === "pass") return { status: "completed", conclusion: "success", output: { title: "Approved", summary: `${verdict.summary}${link}` } }
+  return { status: "completed", conclusion: enforcing ? "failure" : "neutral", output: { title: "Changes requested", summary: `${verdict.summary}${link}` } }
 }
 
 /** the body that closes a check whose run didn't get to a review (cancelled by a newer request, or a job failed) */
