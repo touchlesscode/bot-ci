@@ -14,7 +14,7 @@ export const verdictOf = (text: string): Verdict => {
     .map((finding) => ({
       file: textOf(finding.file) || null,
       line: typeof finding.line === "number" && Number.isInteger(finding.line) ? finding.line : null,
-      severity: finding.severity === "block" ? "block" : "warn",
+      severity: finding.severity === "nit" ? "nit" : "warning",
       note: textOf(finding.note),
       source: textOf(finding.source, "general judgement") || "general judgement",
     }))

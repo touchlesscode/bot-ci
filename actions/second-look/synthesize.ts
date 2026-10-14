@@ -6,10 +6,9 @@
  * architecture, reviews the diff against all that and the rules, folds in both
  * testers' reports, and follows up on its own open threads from earlier runs: a fixed one
  * gets a reply and is resolved, a changed one gets a reply, and nothing is posted twice.
- * new findings that sit on the diff become inline review comments; then it posts one sticky
- * pr comment as clanker-in-chief and closes the pr's check with the outcome. it never runs
- * pr code. advisory by default:
- * a block turns the pr's check red only with SECOND_LOOK_MODE=enforce. exits 1 only
+ * then it submits one review as clanker-in-chief: approve on a pass, request changes on a block, with the new
+ * findings that sit on the diff as inline comments. then one sticky pr comment, and it closes the pr's check with
+ * the outcome. it never runs pr code. a block turns the pr's check red only with SECOND_LOOK_MODE=enforce. exits 1 only
  * when it crashes before closing the check, so the workflow's wrap-up closes it instead.
  *
  *   node synthesize.ts   (in the workflow, cwd = the pr's repo checked out at its base, with the head fetched)
@@ -41,10 +40,14 @@ import { harnessOf } from "./harnessOf.ts"
 import { inlineCommentsOf } from "./inlineCommentsOf.ts"
 import { isEnforcing } from "./isEnforcing.ts"
 import { isRequestedReviewer } from "./isRequestedReviewer.ts"
-import { postInlineReview } from "./postInlineReview.ts"
+import { headlineOf } from "./headlineOf.ts"
+import { postReview } from "./postReview.ts"
 import { postStickyComment } from "./postStickyComment.ts"
 import { requestReviewer } from "./requestReviewer.ts"
+import { reviewBodyOf } from "./reviewBodyOf.ts"
+import { reviewEventOf } from "./reviewEventOf.ts"
 import { routeFindingsOf } from "./routeFindingsOf.ts"
+import { threadKeysLinkedOf } from "./threadKeysLinkedOf.ts"
 import type { EarlierThread } from "./types.ts"
 import { writeHeadFiles } from "./writeHeadFiles.ts"
 import { prepareAuth } from "./prepareAuth.ts"
@@ -144,20 +147,24 @@ const main = async () => {
   const enforcing = isEnforcing(process.env.SECOND_LOOK_MODE)
   const warn = (line: string) => console.log(`::warning title=Second Look (beta)::${line}`)
   const wasRequested = await isRequestedReviewer({ token: appToken, repository, number: pull.number, login: author })
-  const { inline } = inlineCommentsOf({ findings: verdict?.findings ?? [], commentable: commentableLinesOf(diff) })
+  const { inline } = inlineCommentsOf({ findings: verdict?.findings ?? [], commentable: commentableLinesOf(diff), reviewer })
   const { fresh, onThread } = routeFindingsOf({ inline, threads })
-  const reviewBody = `**Second Look (beta)** · ${fresh.length} new finding${fresh.length === 1 ? "" : "s"} on the diff at \`${pull.head.sha.slice(0, 7)}\`. The verdict, how it matches the ticket, what's fixed since the last look and what the testers verified are in the Second Look comment on this PR.`
-  const reviewUrl = await postInlineReview({ token: postToken, repository, number: pull.number, commitId: pull.head.sha, comments: fresh.map(({ comment }) => comment), body: reviewBody })
+  const followUps = verdict ? await followUpThreads({ threads, followUps: verdict.earlier, onThread, headSha: pull.head.sha, reviewer, token: postToken, resolveTokens: [postToken, appToken], repository, number: pull.number, warn }) : []
+  const event = reviewEventOf(verdict)
+  const headline = headlineOf({ verdict, open: followUps.filter(({ status }) => status !== "fixed").length })
+  const reviewBody = reviewBodyOf({ headline, summary: verdict ? threadKeysLinkedOf(threads)(verdict.summary) : undefined, reviewer })
+  const posted = await postReview({ token: postToken, repository, number: pull.number, commitId: pull.head.sha, event, comments: fresh.map(({ comment }) => comment), body: reviewBody })
     .catch((failure: Error) => {
-      warn(`couldn't post the inline comments, the summary has every finding: ${failure.message}`)
-      return undefined
+      warn(`couldn't post the review, the summary has every finding: ${failure.message}`)
+      return null
     })
-  if (reviewUrl) console.log(`second look inline review: ${reviewUrl}`)
+  if (posted !== null && event !== "COMMENT" && posted?.event !== event) warn(`GitHub wouldn't let @${author} ${event === "APPROVE" ? "approve" : "request changes"} on this PR (its own?), so the review only comments`)
+  const reviewUrl = posted?.url || undefined
+  if (reviewUrl) console.log(`second look review (${posted?.event}): ${reviewUrl}`)
   const onDiff = new Set(reviewUrl ? fresh.map(({ finding }) => finding) : [])
-  const followUps = verdict ? await followUpThreads({ threads, followUps: verdict.earlier, onThread, headSha: pull.head.sha, token: postToken, resolveTokens: [postToken, appToken], repository, number: pull.number, warn }) : []
   const replied = followUps.some(({ status }) => status !== "open") || onThread.length > 0
   if (wasRequested && (reviewUrl || replied)) await requestReviewer({ token: appToken, repository, number: pull.number, login: author }).catch((failure: Error) => warn(failure.message))
-  const body = commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, enforcing, headSha: pull.head.sha, scopeReason: process.env.SECOND_LOOK_REQUESTED_BY ? `requested by @${process.env.SECOND_LOOK_REQUESTED_BY}` : "requested", onDiff, reviewUrl, followUps })
+  const body = commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, headSha: pull.head.sha, scopeReason: process.env.SECOND_LOOK_REQUESTED_BY ? `requested by @${process.env.SECOND_LOOK_REQUESTED_BY}` : "requested", onDiff, reviewUrl, followUps })
   console.log(body)
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${body}\n`)
   const commentUrl = await postStickyComment({ token: postToken, repository, number: pull.number, body, marker: commentMarker, author })
@@ -173,7 +180,7 @@ const main = async () => {
   if (checkRunId && checkToken) await sendCheckRun({ token: checkToken, repository, id: checkRunId, body: checkEndOf({ verdict, error, enforcing, commentUrl }) })
     .catch((failure: Error) => console.log(`::warning title=Second Look (beta)::couldn't close the check: ${failure.message}`))
   if (error) return console.log(`::warning title=Second Look (beta)::couldn't review: ${error}`)
-  if (verdict?.verdict === "block") console.log(`::warning title=Second Look (beta)::${enforcing ? "blocks" : "would block"} this PR; see the comment.${enforcing ? "" : " With the org variable SECOND_LOOK_MODE=enforce its check on the PR turns red."}`)
+  if (verdict?.verdict === "block") console.log(`::warning title=Second Look (beta)::requested changes on this PR; see the comment.${enforcing ? "" : " With the org variable SECOND_LOOK_MODE=enforce its check on the PR turns red too."}`)
 }
 
 if (import.meta.main) main().catch((error: Error) => {

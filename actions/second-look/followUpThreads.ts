@@ -2,7 +2,7 @@ import { replyToThread } from "./replyToThread.ts"
 import { resolveThread } from "./resolveThread.ts"
 import { threadKeysLinkedOf } from "./threadKeysLinkedOf.ts"
 import { fixedReplyOf, sameSpotReplyOf, updateReplyOf } from "./threadReplyOf.ts"
-import type { EarlierThread, Finding, ThreadFollowUp, ThreadStatus } from "./types.ts"
+import type { EarlierThread, Family, Finding, ThreadFollowUp, ThreadStatus } from "./types.ts"
 
 /** what happened to one earlier thread this run, for the summary comment */
 export type ThreadOutcome = { thread: EarlierThread; status: ThreadStatus; note: string; resolved: boolean }
@@ -13,11 +13,12 @@ export type ThreadOutcome = { thread: EarlierThread; status: ThreadStatus; note:
  * open). new findings routed onto a thread's spot are replied there. best effort per thread: a failure
  * is a warning and the rest carry on. `resolveTokens` are tried in order (the poster, then the app).
  */
-export const followUpThreads = async ({ threads, followUps, onThread, headSha, token, resolveTokens, repository, number, warn, fetchImpl = fetch }: {
+export const followUpThreads = async ({ threads, followUps, onThread, headSha, reviewer, token, resolveTokens, repository, number, warn, fetchImpl = fetch }: {
   threads: EarlierThread[]
   followUps: ThreadFollowUp[]
   onThread: { thread: EarlierThread; finding: Finding }[]
   headSha: string
+  reviewer: Family
   token: string
   resolveTokens: string[]
   repository: string
@@ -34,9 +35,9 @@ export const followUpThreads = async ({ threads, followUps, onThread, headSha, t
     const note = linked(call?.note ?? "")
     let resolved = false
     try {
-      if (status === "update") await reply(thread, updateReplyOf({ note, headSha }))
+      if (status === "update") await reply(thread, updateReplyOf({ note, headSha, reviewer }))
       if (status === "fixed") {
-        await reply(thread, fixedReplyOf({ note, headSha }))
+        await reply(thread, fixedReplyOf({ note, headSha, reviewer }))
         await resolveThread({ tokens: resolveTokens, threadId: thread.id, fetchImpl })
         resolved = true
       }
@@ -45,6 +46,6 @@ export const followUpThreads = async ({ threads, followUps, onThread, headSha, t
     }
     outcomes.push({ thread, status, note, resolved })
   }
-  for (const { thread, finding } of onThread) await reply(thread, sameSpotReplyOf({ finding, headSha })).catch((error: Error) => warn(`${thread.path} (${thread.url}): ${error.message}`))
+  for (const { thread, finding } of onThread) await reply(thread, sameSpotReplyOf({ finding, reviewer })).catch((error: Error) => warn(`${thread.path} (${thread.url}): ${error.message}`))
   return outcomes
 }

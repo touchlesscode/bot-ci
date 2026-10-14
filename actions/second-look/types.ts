@@ -34,8 +34,11 @@ export type AgentReport = {
   costUsd?: number
 }
 
+/** warning: should change before merge (a block rests on these); nit: small, optional polish */
+export type Severity = "warning" | "nit"
+
 /** one finding in the main reviewer's verdict; `source` is the doc, rule or tester it rests on */
-export type Finding = { file: string | null; line: number | null; severity: "block" | "warn"; note: string; source: string }
+export type Finding = { file: string | null; line: number | null; severity: Severity; note: string; source: string }
 
 /** fixed: the head no longer has the issue; open: still there, nothing new to say; update: still there, with something new */
 export type ThreadStatus = "fixed" | "open" | "update"
