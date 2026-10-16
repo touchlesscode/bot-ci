@@ -49,9 +49,12 @@ const sections: Section[] = [
 export const isLintInScope = ({ scope, author, body, botLogins = defaultBotLogins }: { scope?: string; author?: string; body?: string; botLogins?: string[] }) =>
   scope === "all" || (author !== undefined && botLogins.includes(author)) || harnessMarker.test(body ?? "")
 
-/** the content under a markdown heading, up to the next `##`/`###` heading (html comments after the heading are ignored) */
+/**
+ * the content under a markdown heading, up to the next `##`/`###` heading (html comments after the heading are ignored).
+ * the heading must be a line of its own, so a mention of it in prose or backticks doesn't count
+ */
 export const sectionContentOf = (body: string, heading: string) =>
-  body.match(new RegExp(`${heading}\\s*(?:<!--.*?-->\\s*)*([\\s\\S]*?)(?=^## |^### |\\s*$)`, "m"))?.[1]?.trim()
+  body.match(new RegExp(`^${heading}[ \\t]*$\\s*(?:<!--.*?-->\\s*)*([\\s\\S]*?)(?=^## |^### |\\s*$)`, "m"))?.[1]?.trim()
 
 /** every title and description problem, or why the pr is exempt (dependabot, merge queue, reverts) */
 export const lintPullRequest = ({ title, body, branch }: PullRequestText): LintResult => {

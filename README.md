@@ -1,6 +1,6 @@
 # bot-ci
 
-The CI and guardrails for bot-built code in touchlesscode. Two org rulesets make it apply to every repo's default branch without anyone adding files to the repo, and everything runs on Ubicloud runners.
+The CI and guardrails for bot-built code in touchlesscode. Org rulesets make it apply to every repo's default branch without anyone adding files to the repo, and everything runs on Ubicloud runners.
 
 | check | runs on | what it does |
 |-------|---------|--------------|
@@ -11,7 +11,7 @@ The CI and guardrails for bot-built code in touchlesscode. Two org rulesets make
 
 A second ruleset, `review-required`, needs one human approval given after the last push, and blocks force-pushes and deleting the default branch. The Touchless Bot App has no bypass, so it can open PRs but never merge one alone.
 
-In practice Build and Previews only do work in repos with no CI of their own, which today means the bot's `touchlesscode/apps` monorepo and repos made from `app-template`. exo and anything else with a `pull_request` workflow skip them.
+In practice Build and Previews only run in repos with no CI of their own, which today means the bot's `touchlesscode/apps` monorepo and repos made from `app-template`. exo and anything else with a `pull_request` workflow are left out of the `bot-ci-build` ruleset, so they never see them.
 
 ## PR Lint
 
@@ -34,7 +34,7 @@ Dependabot, merge-queue and revert PRs are skipped. **Editing the title or body 
 
 ## Build
 
-First it decides whether to run at all (`actions/ci/planChecks.ts`). It skips repos that already run a GitHub workflow on `pull_request` or use another CI system (Buildkite, CircleCI, GitLab, and so on), and repos with no root `package.json`. The job summary says which.
+First a light **Plan** job decides whether to run at all (`actions/ci/planChecks.ts`, from a checkout of just the CI config and `package.json`). It skips repos that already run a GitHub workflow on `pull_request` or use another CI system (Buildkite, CircleCI, GitLab, and so on), and repos with no root `package.json`; then the Build job doesn't start, which still passes. The job summary says why. Repos known to skip are left out of the ruleset altogether, so they don't even get Plan.
 
 - **NX workspaces** get exo's pipeline: `nrwl/nx-set-shas` finds the base, then `nx affected -t build`, `lint`, `typecheck` and `test`, with the local NX cache and the pnpm store cached.
 - **Other Node repos** install with a frozen lockfile, then run whichever of `lint`, a typecheck script (`typecheck`, `type-check`, `check-types` or `tsc`), `test` and `build` they declare.
@@ -88,7 +88,7 @@ The guard doesn't check bindings: a feature env that binds a prod KV namespace, 
 
 ## Opting a repo out
 
-Add your own `pull_request` workflow and Build and Previews skip the repo. To leave a repo out of the rulesets entirely, an org owner adds it to the excludes (`setup.sh --exclude <repo>`).
+Add your own `pull_request` workflow and Build and Previews skip the repo (and leave its required checks at the next `setup.sh` run). To leave a repo out of the rulesets entirely, an org owner adds it to the excludes (`setup.sh --exclude <repo>`).
 
 ## Settings
 

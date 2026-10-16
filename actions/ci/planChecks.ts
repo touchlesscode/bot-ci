@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * org ci planner: decides what the org-wide required ci runs in a checked-out repo.
- * nothing when the repo already has its own pull request ci or isn't a node project.
+ * nothing when the repo wasn't made from app-template (it's for the bot's repos), already has its own
+ * pull request ci, or isn't a node project.
  * nx workspaces get exo's pipeline: `nx affected -t build|lint|typecheck|test` against
  * nx-set-shas' base, with the local nx cache. other node repos get install plus the
  * lint / typecheck / test / build scripts they declare.
@@ -43,7 +44,8 @@ export type RepoSnapshot = {
   readText: (path: string) => string | undefined
 }
 
-const otherCiFiles = [".buildkite", ".circleci", "codefresh.yml", ".gitlab-ci.yml", "azure-pipelines.yml", "bitbucket-pipelines.yml", ".travis.yml", "Jenkinsfile"]
+/** other ci systems' config at the repo root (actions/ci-plan's sparse checkout lists the same paths) */
+export const otherCiFiles = [".buildkite", ".circleci", "codefresh.yml", ".gitlab-ci.yml", "azure-pipelines.yml", "bitbucket-pipelines.yml", ".travis.yml", "Jenkinsfile"]
 const typecheckScripts = ["typecheck", "type-check", "check-types", "tsc"]
 const nxTargets = ["build", "lint", "typecheck", "test"]
 const placeholderTest = /no test specified/
@@ -113,8 +115,13 @@ export const nodeVersionOf = (repo: RepoSnapshot, packageJson: PackageJson): { n
   return { nodeVersion: "24" }
 }
 
-/** the whole plan for one repo */
-export const planChecks = (repo: RepoSnapshot): CheckPlan => {
+/**
+ * the whole plan for one repo. `botBuilt` says whether the repo was made from app-template (the bot's repos and
+ * `apps`); Build is only for those, so anything else is skipped. undefined means it wasn't checked (the Build job,
+ * which only starts after the plan job said yes)
+ */
+export const planChecks = (repo: RepoSnapshot, { botBuilt }: { botBuilt?: boolean } = {}): CheckPlan => {
+  if (botBuilt === false) return { skip: true, reason: "not made from app-template; Build is only for the bot's repos" }
   const ownCi = ownCiOf(repo)
   if (ownCi) return { skip: true, reason: `the repo runs its own CI (${ownCi})` }
   const text = repo.readText("package.json")
@@ -173,8 +180,14 @@ export const outputLinesOf = (plan: CheckPlan) => [
   ]),
 ]
 
+/** BOT_CI_TEMPLATE_OF (the repo's template, blank for none) against BOT_CI_TEMPLATE; undefined when either isn't set */
+export const botBuiltOf = (environment: NodeJS.ProcessEnv) => {
+  if (!environment.BOT_CI_TEMPLATE || environment.BOT_CI_TEMPLATE_OF === undefined) return undefined
+  return environment.BOT_CI_TEMPLATE_OF.toLowerCase() === environment.BOT_CI_TEMPLATE.toLowerCase()
+}
+
 if (import.meta.main) {
-  const plan = planChecks(directorySnapshot(process.cwd()))
+  const plan = planChecks(directorySnapshot(process.cwd()), { botBuilt: botBuiltOf(process.env) })
   console.log(`Build: ${plan.skip ? "skipping — " : ""}${plan.reason}`)
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `${outputLinesOf(plan).join("\n")}\n`)
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Build\n${plan.skip ? "Skipped" : "Plan"}: ${plan.reason}\n`)

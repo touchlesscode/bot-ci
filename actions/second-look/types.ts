@@ -14,6 +14,8 @@ export type PullRequest = {
   base: { sha: string; ref?: string; repo?: { full_name?: string } }
   head: { sha: string; ref?: string; repo?: { full_name?: string } }
   user?: { login?: string }
+  additions?: number
+  deletions?: number
 }
 
 /** one testing step a tester tried */

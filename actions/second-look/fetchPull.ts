@@ -2,7 +2,8 @@
 /**
  * second look, in a dispatched run: fetches the pr it was asked to look at and writes it as a
  * pull_request event (targetOf.ts reads it), so every later step sees the same pr. it refuses
- * repos outside the run's own org and prs that aren't open. with SECOND_LOOK_HEAD_SHA (what
+ * repos outside the run's own org, prs that aren't open, and prs that change over 5,000 lines.
+ * with SECOND_LOOK_HEAD_SHA (what
  * prepare checked out), a pr that has moved on since is still reviewed at that commit.
  *
  *   node fetchPull.ts
@@ -13,6 +14,7 @@
  */
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
+import { maxChangedLines, overLimitOf } from "./changedLinesOf.ts"
 import type { PullRequest } from "./types.ts"
 
 /** why second look won't look at this pr; undefined when it will */
@@ -20,6 +22,8 @@ export const refusalOf = ({ repository, owner, pull }: { repository: string; own
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) return `"${repository}" isn't an owner/name repository`
   if (repository.split("/")[0].toLowerCase() !== owner.toLowerCase()) return `${repository} isn't in ${owner}`
   if (pull && pull.state !== "open") return `${repository}#${pull.number} is ${pull.state ?? "not open"}`
+  const over = pull ? overLimitOf(pull) : undefined
+  if (pull && over !== undefined) return `${repository}#${pull.number} changes ${over} lines, over the ${maxChangedLines} second look will review`
   return undefined
 }
 

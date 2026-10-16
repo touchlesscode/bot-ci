@@ -1,4 +1,4 @@
-# required on every repo's default-branch PRs by the org ruleset "bot-ci".
+# required on every repo's default-branch PRs by the org ruleset "bot-ci" (Build has its own, "bot-ci-build").
 # rulesets ignore `types`, so an edited title or body doesn't re-run this; a push or reopen does.
 name: PR Lint
 

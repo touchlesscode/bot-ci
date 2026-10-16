@@ -1,5 +1,7 @@
-# required on every repo's default-branch PRs by the org ruleset "bot-ci".
-# rulesets ignore trigger filters: this always runs on opened / synchronize / reopened.
+# Build is for the bot's repos: ones made from app-template, without their own CI. required on default-branch
+# PRs by the org ruleset "bot-ci-build", which leaves out every repo setup.sh's scan found isn't one. rulesets
+# ignore trigger filters: this always runs on opened / synchronize / reopened. the plan job decides on a light
+# runner, so a human repo created since that scan never starts the build runner (a skipped job still passes).
 # staging previews only, exo-style (wrangler env.feature, <app>-<version>.touchlessapis.com).
 # the checks job runs the PR's code; its one secret, PACKAGES_READ_TOKEN (read:packages for
 # @touchlesscode/*), only reaches the scripts-off install after npmrcGuard. it bundles the previews.
@@ -22,8 +24,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    name: Plan
+    runs-on: ${{ vars.BOT_CI_LIGHT_RUNNER || vars.ORG_CI_LIGHT_RUNNER || 'ubicloud-standard-2' }}
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+    steps:
+      - id: plan
+        uses: touchlesscode/bot-ci/actions/ci-plan@main
+        with:
+          github-token: ${{ github.token }}
+          template: touchlesscode/app-template
+
   checks:
     name: Build
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: ${{ vars.BOT_CI_RUNNER || vars.ORG_CI_RUNNER || 'ubicloud-standard-8' }}
     timeout-minutes: 30
     outputs:

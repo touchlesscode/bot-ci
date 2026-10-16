@@ -6,8 +6,9 @@
  * architecture, reviews the diff against all that and the rules, folds in both
  * testers' reports, and follows up on its own open threads from earlier runs: a fixed one
  * gets a reply and is resolved, a changed one gets a reply, and nothing is posted twice.
- * then it submits one review as clanker-in-chief: approve on a pass, request changes on a block, with the new
- * findings that sit on the diff as inline comments. then one sticky pr comment, and it closes the pr's check with
+ * then it submits one review as clanker-in-chief: approve on a pass, request changes on a block, a comment when it
+ * couldn't review, with the new findings that sit on the diff as inline comments; one that doesn't approve tags the
+ * author with `@clanker-in-chief approve`, which forces an approval for now. then one sticky pr comment, and it closes the pr's check with
  * the outcome. it never runs pr code. a block turns the pr's check red only with SECOND_LOOK_MODE=enforce. exits 1 only
  * when it crashes before closing the check, so the workflow's wrap-up closes it instead.
  *
@@ -25,6 +26,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { approveHintOf } from "./approveHintOf.ts"
 import { architectureDocsOf } from "./architectureDocsOf.ts"
 import { childEnvironmentOf } from "./childEnvironmentOf.ts"
 import { cliCommandOf, defaultModels } from "./cliCommandOf.ts"
@@ -152,7 +154,12 @@ const main = async () => {
   const followUps = verdict ? await followUpThreads({ threads, followUps: verdict.earlier, onThread, headSha: pull.head.sha, reviewer, token: postToken, resolveTokens: [postToken, appToken], repository, number: pull.number, warn }) : []
   const event = reviewEventOf(verdict)
   const headline = headlineOf({ verdict, open: followUps.filter(({ status }) => status !== "fixed").length })
-  const reviewBody = reviewBodyOf({ headline, summary: verdict ? threadKeysLinkedOf(threads)(verdict.summary) : undefined, reviewer })
+  const reviewBody = reviewBodyOf({
+    headline,
+    summary: verdict ? threadKeysLinkedOf(threads)(verdict.summary) : error ? `Couldn't review: ${error}` : undefined,
+    hint: event === "APPROVE" ? undefined : approveHintOf(pull.user?.login),
+    reviewer,
+  })
   const posted = await postReview({ token: postToken, repository, number: pull.number, commitId: pull.head.sha, event, comments: fresh.map(({ comment }) => comment), body: reviewBody })
     .catch((failure: Error) => {
       warn(`couldn't post the review, the summary has every finding: ${failure.message}`)
