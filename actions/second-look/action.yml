@@ -5,7 +5,7 @@ inputs:
     description: "prepare, synthesize or abandon"
     required: true
   github-token:
-    description: "a Touchless Bot App token for the PR's repo only. prepare: contents + pull-requests read; synthesize: contents read, issues + pull-requests write (posting falls back to it when post-token is blank, and it re-requests clanker-in-chief after the inline review); abandon: issues write, for the didn't-finish reply when post-token is blank"
+    description: "a Touchless Bot App token for the PR's repo only. prepare: contents + pull-requests read; synthesize: contents read, issues + pull-requests write (posting falls back to it when post-token is blank, and it re-requests clanker-in-chief after the inline review); abandon: issues + pull-requests write, for the didn't-finish comment review when post-token is blank"
     required: false
   checks-token:
     description: "a Touchless Bot App token with checks write on the PR's repo, minted on its own so a missing Checks permission only means no check. blank: no check"

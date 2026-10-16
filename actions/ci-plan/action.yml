@@ -1,0 +1,45 @@
+name: bot-ci plan
+description: Whether Build has anything to do in this repo (actions/ci/planChecks.ts) — only repos made from app-template (the bot's repos), without their own CI, with a package.json — from the repo's template link and a sparse checkout of just its CI config and package.json, so any other repo costs a light runner for a few seconds and never starts Build. Keep the sparse list in step with planChecks' otherCiFiles (a test checks)
+inputs:
+  github-token:
+    required: true
+  template:
+    description: "owner/name of the app template; repos made from it get Build"
+    required: true
+outputs:
+  build:
+    description: "'true' when Build should run"
+    value: ${{ steps.plan.outputs.skip != 'true' }}
+runs:
+  using: composite
+  steps:
+    - id: template
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: echo "of=$(gh api "repos/$GITHUB_REPOSITORY" --jq '.template_repository.full_name // ""')" >> "$GITHUB_OUTPUT"
+    - if: steps.template.outputs.of == inputs.template
+      uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+        sparse-checkout-cone-mode: false
+        sparse-checkout: |
+          /.github/workflows/
+          /package.json
+          /.buildkite/
+          /.circleci/
+          /codefresh.yml
+          /.gitlab-ci.yml
+          /azure-pipelines.yml
+          /bitbucket-pipelines.yml
+          /.travis.yml
+          /Jenkinsfile
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 24
+    - id: plan
+      shell: bash
+      env:
+        BOT_CI_TEMPLATE: ${{ inputs.template }}
+        BOT_CI_TEMPLATE_OF: ${{ steps.template.outputs.of }}
+      run: node "$GITHUB_ACTION_PATH/../ci/planChecks.ts"

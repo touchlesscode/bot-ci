@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * second look's check on the pr, in a dispatched run: `start` opens it on the head while the
- * review runs, `abandon` closes it when the run ended without a review. synthesize.ts closes it
+ * review runs, `abandon` closes it when the run ended without a review, unless something already did (the relay's
+ * forced approval turns it green and cancels the run). synthesize.ts closes it
  * with the verdict. best effort: without the app's checks permission there's just no check,
  * and the review comment still posts.
  *
@@ -28,6 +29,8 @@ const main = async () => {
   if (action === "abandon") {
     const id = process.env.SECOND_LOOK_CHECK_RUN_ID
     if (!id) return console.log("second look: no check to close")
+    const current = await fetch(`https://api.github.com/repos/${repository}/check-runs/${id}`, { headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" } })
+    if (current.ok && ((await current.json()) as { status?: string }).status === "completed") return console.log("second look: the check is already closed (a forced approval?), leaving it")
     await sendCheckRun({ token, repository, id, body: checkAbandonedOf({ result: process.env.SECOND_LOOK_RESULT || "failure", detailsUrl }) })
     return console.log(`second look: closed the check on ${repository} (${id})`)
   }
