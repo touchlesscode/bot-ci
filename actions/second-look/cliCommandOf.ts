@@ -4,7 +4,7 @@ export type Role = "tester" | "reviewer"
 
 export type CliCommand = { command: string; args: string[] }
 
-export const defaultModels: Record<Family, string> = { anthropic: "claude-opus-5-5", openai: "gpt-6-sol" }
+export const defaultModels: Record<Family, string> = { anthropic: "claude-opus-5-5", openai: "gpt-6.1-sol" }
 
 const testerTools = ["Bash", "Read", "Grep", "Glob", "Edit", "Write"]
 const reviewerTools = ["Read", "Grep", "Glob"]
