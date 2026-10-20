@@ -1,5 +1,5 @@
 name: bot-ci plan
-description: Whether Build has anything to do in this repo (actions/ci/planChecks.ts) — only repos made from app-template (the bot's repos), without their own CI, with a package.json — from the repo's template link and a sparse checkout of just its CI config and package.json, so any other repo costs a light runner for a few seconds and never starts Build. Keep the sparse list in step with planChecks' otherCiFiles (a test checks)
+description: Whether Build has anything to do in this repo (actions/ci/planChecks.ts) — only repos made from app-template (the bot's repos), without their own CI, with a package.json — from the repo's template link and a sparse checkout of just its CI config and package.json, so any other repo costs a light runner for a few seconds and never starts Build. The Template step (actions/ci/templateLineage.ts) reads the lineage before anything is checked out, so the token never runs next to the PR's code; a lookup that fails, or comes back without a template from a token that can't read the template itself, fails this job instead of recording ineligibility. Keep the sparse list in step with planChecks' otherCiFiles (a test checks)
 inputs:
   github-token:
     required: true
@@ -8,17 +8,22 @@ inputs:
     required: true
 outputs:
   build:
-    description: "'true' when Build should run"
-    value: ${{ steps.plan.outputs.skip != 'true' }}
+    description: "'true' only when the lineage came back eligible and the planner then found work; anything else is 'false'"
+    value: ${{ steps.template.outputs.eligible == 'true' && steps.plan.outputs.skip == 'false' }}
 runs:
   using: composite
   steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 24
+    # before the checkout, so the token is only ever in a job with none of the repo's code in it
     - id: template
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
-      run: echo "of=$(gh api "repos/$GITHUB_REPOSITORY" --jq '.template_repository.full_name // ""')" >> "$GITHUB_OUTPUT"
-    - if: steps.template.outputs.of == inputs.template
+        BOT_CI_TEMPLATE: ${{ inputs.template }}
+      run: node "$GITHUB_ACTION_PATH/../ci/templateLineage.ts"
+    - if: steps.template.outputs.eligible == 'true'
       uses: actions/checkout@v7
       with:
         persist-credentials: false
@@ -34,12 +39,8 @@ runs:
           /bitbucket-pipelines.yml
           /.travis.yml
           /Jenkinsfile
-    - uses: actions/setup-node@v6
-      with:
-        node-version: 24
     - id: plan
       shell: bash
       env:
-        BOT_CI_TEMPLATE: ${{ inputs.template }}
-        BOT_CI_TEMPLATE_OF: ${{ steps.template.outputs.of }}
+        BOT_CI_BUILT: ${{ steps.template.outputs.eligible }}
       run: node "$GITHUB_ACTION_PATH/../ci/planChecks.ts"

@@ -19,7 +19,8 @@ export type PackageJson = { scripts?: Record<string, string>; engines?: { node?:
 export type Check = { name: string; command: string }
 
 export type CheckPlan =
-  | { skip: true; reason: string }
+  /** `failed` is a plan that couldn't be made, not a repo with nothing to do: the job fails instead of passing green */
+  | { skip: true; reason: string; failed?: true }
   | {
       skip: false
       reason: string
@@ -116,11 +117,13 @@ export const nodeVersionOf = (repo: RepoSnapshot, packageJson: PackageJson): { n
 }
 
 /**
- * the whole plan for one repo. `botBuilt` says whether the repo was made from app-template (the bot's repos and
- * `apps`); Build is only for those, so anything else is skipped. undefined means it wasn't checked (the Build job,
- * which only starts after the plan job said yes)
+ * the whole plan for one repo. `botBuilt` is the template lineage (templateLineage.ts): true for a repo made from
+ * app-template (the bot's repos and `apps`), false for one made from something else, "unknown" when the lookup
+ * couldn't say — which fails the plan rather than skipping, since an unreadable lineage isn't proof of anything.
+ * undefined means it wasn't checked (the Build job, which only starts after the plan job said yes)
  */
-export const planChecks = (repo: RepoSnapshot, { botBuilt }: { botBuilt?: boolean } = {}): CheckPlan => {
+export const planChecks = (repo: RepoSnapshot, { botBuilt }: { botBuilt?: boolean | "unknown" } = {}): CheckPlan => {
+  if (botBuilt === "unknown") return { skip: true, failed: true, reason: "couldn't establish the repo's template lineage; the Template step says why" }
   if (botBuilt === false) return { skip: true, reason: "not made from app-template; Build is only for the bot's repos" }
   const ownCi = ownCiOf(repo)
   if (ownCi) return { skip: true, reason: `the repo runs its own CI (${ownCi})` }
@@ -180,15 +183,27 @@ export const outputLinesOf = (plan: CheckPlan) => [
   ]),
 ]
 
-/** BOT_CI_TEMPLATE_OF (the repo's template, blank for none) against BOT_CI_TEMPLATE; undefined when either isn't set */
-export const botBuiltOf = (environment: NodeJS.ProcessEnv) => {
-  if (!environment.BOT_CI_TEMPLATE || environment.BOT_CI_TEMPLATE_OF === undefined) return undefined
-  return environment.BOT_CI_TEMPLATE_OF.toLowerCase() === environment.BOT_CI_TEMPLATE.toLowerCase()
+/**
+ * BOT_CI_BUILT, the Template step's verdict (templateLineage.ts): "true", "false", anything else — an empty
+ * value from a step that didn't run included — is unknown. unchecked means *no* lineage variable is set at
+ * all, so a half-migrated action still setting the old BOT_CI_TEMPLATE pair reads as a check that was
+ * attempted and produced nothing, not as permission to build.
+ */
+export const botBuiltOf = (environment: NodeJS.ProcessEnv): boolean | "unknown" | undefined => {
+  const built = environment.BOT_CI_BUILT
+  if (built === "true") return true
+  if (built === "false") return false
+  if (built !== undefined) return "unknown"
+  const attempted = environment.BOT_CI_TEMPLATE !== undefined || environment.BOT_CI_TEMPLATE_OF !== undefined
+  return attempted ? "unknown" : undefined
 }
 
 if (import.meta.main) {
   const plan = planChecks(directorySnapshot(process.cwd()), { botBuilt: botBuiltOf(process.env) })
-  console.log(`Build: ${plan.skip ? "skipping — " : ""}${plan.reason}`)
+  const line = `Build: ${plan.skip ? (plan.failed ? "can't plan — " : "skipping — ") : ""}${plan.reason}`
+  if (plan.skip && plan.failed) console.error(line)
+  else console.log(line)
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `${outputLinesOf(plan).join("\n")}\n`)
-  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Build\n${plan.skip ? "Skipped" : "Plan"}: ${plan.reason}\n`)
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Build\n${plan.skip ? (plan.failed ? "Failed" : "Skipped") : "Plan"}: ${plan.reason}\n`)
+  if (plan.skip && plan.failed) process.exitCode = 1
 }
