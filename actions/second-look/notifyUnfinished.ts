@@ -2,7 +2,7 @@
 /**
  * second look's wrap-up when a run ended without a review (and wasn't cancelled): the relay already
  * told the pr a review is coming, so this says it isn't, with a link to the run, as a comment review
- * that tags the author with the force-approval hint (a plain pr comment when a review can't be posted). best effort.
+ * (a plain pr comment when a review can't be posted). best effort.
  *
  *   node notifyUnfinished.ts
  *
@@ -10,7 +10,6 @@
  * SECOND_LOOK_REPOSITORY (validated by prepare), SECOND_LOOK_NUMBER, SECOND_LOOK_RESULT, SECOND_LOOK_STAGE,
  * GITHUB_SERVER_URL, GITHUB_REPOSITORY, GITHUB_RUN_ID.
  */
-import { approveHintOf } from "./approveHintOf.ts"
 import { unfinishedReplyOf } from "./unfinishedReplyOf.ts"
 
 const main = async () => {
@@ -25,9 +24,7 @@ const main = async () => {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
   const detailsUrl = `${process.env.GITHUB_SERVER_URL || "https://github.com"}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
-  const pull = await api(`pulls/${number}`)
-  const author = pull.ok ? ((await pull.json()) as { user?: { login?: string } }).user?.login : undefined
-  const body = `${unfinishedReplyOf({ result: process.env.SECOND_LOOK_RESULT || "failure", stage: process.env.SECOND_LOOK_STAGE || "review", detailsUrl })}\n\n${approveHintOf(author)}`
+  const body = unfinishedReplyOf({ result: process.env.SECOND_LOOK_RESULT || "failure", stage: process.env.SECOND_LOOK_STAGE || "review", detailsUrl })
   const review = await api(`pulls/${number}/reviews`, { event: "COMMENT", body })
   if (review.ok) return console.log(`second look: told ${repository}#${number} the run didn't finish (comment review)`)
   const comment = await api(`issues/${number}/comments`, { body })
