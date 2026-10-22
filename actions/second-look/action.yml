@@ -45,9 +45,6 @@ inputs:
     required: false
   openai-model:
     required: false
-  mode:
-    description: "advisory (default): the check is never red; enforce: a block or a failed review turns it red"
-    required: false
   budget-usd:
     description: "the Claude reviewer's spend cap per run (default 3)"
     required: false
@@ -177,7 +174,6 @@ runs:
         SECOND_LOOK_OPENAI_API_KEY: ${{ inputs.openai-api-key }}
         SECOND_LOOK_ANTHROPIC_MODEL: ${{ inputs.anthropic-model }}
         SECOND_LOOK_OPENAI_MODEL: ${{ inputs.openai-model }}
-        SECOND_LOOK_MODE: ${{ inputs.mode }}
         SECOND_LOOK_BUDGET_USD: ${{ inputs.budget-usd }}
         SECOND_LOOK_REPORTS_DIRECTORY: ${{ runner.temp }}/second-look-reports
         SECOND_LOOK_DEFAULT_RULES: ${{ github.action_path }}/rules.md

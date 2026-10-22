@@ -72,9 +72,9 @@ const reportSectionOf = (report: AgentReport) => {
  * the sticky comment, kept short: the call, the reviewer's summary, each new finding in a line (linking the ones
  * on the diff, in the review at `reviewUrl`) and links to the earlier threads (`followUps`) that are fixed or still
  * open. the ticket fit and testing, each tester's steps and the intended architecture sit collapsed below.
- * `error` replaces the summary when the main reviewer didn't answer.
+ * `error` replaces the summary when the main reviewer didn't answer. `betaEnabled` is whether a pass is an approval
  */
-export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel, harness, headSha, scopeReason, onDiff = new Set(), reviewUrl, followUps = [] }: {
+export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel, harness, headSha, scopeReason, onDiff = new Set(), reviewUrl, followUps = [], betaEnabled = false }: {
   verdict?: Verdict
   error?: string
   reports: AgentReport[]
@@ -86,12 +86,13 @@ export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel
   onDiff?: ReadonlySet<Finding>
   reviewUrl?: string
   followUps?: ThreadOutcome[]
+  betaEnabled?: boolean
 }) => {
   const cost = reports.reduce((total, report) => total + (report.costUsd ?? 0), 0)
   const linked = threadKeysLinkedOf(followUps.map(({ thread }) => thread))
   const lines = [
     commentMarker,
-    headlineOf({ verdict, open: followUps.filter(({ status }) => status !== "fixed").length }),
+    headlineOf({ verdict, open: followUps.filter(({ status }) => status !== "fixed").length, betaEnabled }),
     "",
     verdict ? linked(verdict.summary) : `The main reviewer didn't answer: ${error ?? "unknown error"}. The testers' reports are below.`,
     ...(verdict?.findings.length ? ["", ...verdict.findings.map(findingLineOf(onDiff, linked, reviewUrl))] : []),
