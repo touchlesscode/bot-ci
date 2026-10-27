@@ -3,8 +3,12 @@ import type { Verdict } from "./types.ts"
 /** a github pull request review's event */
 export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT"
 
-/** a pass approves and a block requests changes; without a verdict the review only comments */
-export const reviewEventOf = (verdict: Verdict | undefined): ReviewEvent => {
+/**
+ * the review a verdict becomes. a block requests changes and no verdict only comments. a pass approves only on a
+ * beta-enabled pr; everywhere else it comments, so outside the beta scope second look never approves
+ */
+export const reviewEventOf = ({ verdict, betaEnabled }: { verdict: Verdict | undefined; betaEnabled: boolean }): ReviewEvent => {
   if (!verdict) return "COMMENT"
-  return verdict.verdict === "pass" ? "APPROVE" : "REQUEST_CHANGES"
+  if (verdict.verdict === "block") return "REQUEST_CHANGES"
+  return betaEnabled === true ? "APPROVE" : "COMMENT"
 }

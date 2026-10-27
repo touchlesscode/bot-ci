@@ -9,7 +9,7 @@ inputs:
   cloudflare-account-id:
     required: true
   app-secrets:
-    description: toJSON(secrets) — apps' config.exo.secrets are taken from it and pushed with wrangler secret bulk
+    description: toJSON(secrets) — apps' config.exo.secrets are taken from it and uploaded with the deploy via wrangler deploy --secrets-file
     required: false
     default: "{}"
   preview-zone:
@@ -26,7 +26,7 @@ runs:
         name: bot-ci-previews
         path: ${{ runner.temp }}/bot-ci-previews
     - shell: bash
-      run: npm install --prefix "$RUNNER_TEMP/bot-ci-wrangler" --no-audit --no-fund --silent wrangler@4
+      run: npm install --prefix "$RUNNER_TEMP/bot-ci-wrangler" --no-audit --no-fund --silent wrangler@4.147.0
     - shell: bash
       env:
         CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token }}
