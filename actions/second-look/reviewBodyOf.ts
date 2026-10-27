@@ -2,8 +2,8 @@ import { cliNameOf } from "./cliNameOf.ts"
 import type { Family } from "./types.ts"
 
 /**
- * the review's own body: the headline, the reviewer's summary (or why there isn't one) and, when it didn't approve,
- * the force-approval hint; the testing and architecture detail stays in the summary comment
+ * the review's own body: the headline and the reviewer's summary (or why there isn't one); the testing and
+ * architecture detail stays in the summary comment
  */
-export const reviewBodyOf = ({ headline, summary, hint, reviewer }: { headline: string; summary?: string; hint?: string; reviewer: Family }) =>
-  [headline, ...(summary ? ["", summary] : []), ...(hint ? ["", hint] : []), "", `<sub>Reviewed via ${cliNameOf(reviewer)} · testing and architecture are in the Second Look comment</sub>`].join("\n")
+export const reviewBodyOf = ({ headline, summary, reviewer }: { headline: string; summary?: string; reviewer: Family }) =>
+  [headline, ...(summary ? ["", summary] : []), "", `<sub>Reviewed via ${cliNameOf(reviewer)} · testing and architecture are in the Second Look comment</sub>`].join("\n")

@@ -68,7 +68,7 @@ An affected app gets a preview when its `wrangler.jsonc` has an `env.feature` se
 ```
 
 - `VERSION` is exo's `getVersionFromBranch`: the last 20 characters of `<branch>-pr`, lowercased, with `.`, `/` and `_` turned into `-`.
-- Secrets listed in the app's `package.json` under `config.exo.secrets` are pushed with `wrangler secret bulk`. Their values come from the repo's GitHub secrets with the same names. A listed secret that's missing fails that app's preview.
+- Secrets listed in the app's `package.json` under `config.exo.secrets` are uploaded with the deploy itself, via `wrangler deploy --secrets-file`, so a new Worker whose config declares required secrets deploys on its first run. Their values come from the repo's GitHub secrets with the same names. A listed secret that's missing fails that app's preview.
 - The PR description gets the Preview Deployments table (🟢 deployed, 🔴 failed, ⚪ skipped) between its `deployment-links` markers, and a failed deploy also gets a comment.
 - Dependabot and fork PRs don't deploy. Apps with no `env.feature`, or with a `wrangler.toml`, are listed as skipped.
 

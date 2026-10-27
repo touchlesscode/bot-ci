@@ -41,7 +41,7 @@ const affectedRootsOf = (execPrefix: string) => {
 
 /** wrangler from the workspace when it's installed, else a pinned npx download */
 const wranglerCommandOf = (execPrefix: string, root: string) =>
-  existsSync("node_modules/.bin/wrangler") || existsSync(join(root, "node_modules/.bin/wrangler")) ? [...commandOf(execPrefix), "wrangler"] : ["npx", "--yes", "wrangler@4"]
+  existsSync("node_modules/.bin/wrangler") || existsSync(join(root, "node_modules/.bin/wrangler")) ? [...commandOf(execPrefix), "wrangler"] : ["npx", "--yes", "wrangler@4.147.0"]
 
 /** the bundle's entry file: wrangler names it after `main`, with a .js extension */
 const mainFileOf = (bundleDirectory: string, main: string | undefined) => {

@@ -9,8 +9,10 @@
  *   `<app>-<version>.<zone>` (previewGuard.ts), so a PR can't deploy over prod
  * - deploys the prebuilt bundle with a pinned wrangler installed outside any checkout
  *   (`no_bundle`, no build command), with a config it writes itself
- * - pushes the secrets the app lists in package.json `config.exo.secrets` with
- *   `wrangler secret bulk --env feature`, never infra secrets (Cloudflare, model keys)
+ * - uploads the secrets the app lists in package.json `config.exo.secrets` with the deploy
+ *   itself (`wrangler deploy --secrets-file`, a 0600 file in a temp dir removed right after),
+ *   so a new worker whose config declares required secrets deploys on its first run; never
+ *   infra secrets (Cloudflare, model keys)
  * - writes exo's Preview Deployments table into the PR description; a failed deploy also
  *   gets exo's failure comment
  *
@@ -24,7 +26,7 @@
  * BOT_CI_WRANGLER (the pinned wrangler binary), BOT_CI_PREVIEW_ZONE, BOT_CI_SECRETS (JSON of the repo's secrets).
  */
 import { execFileSync } from "node:child_process"
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { basename, join } from "node:path"
 import { deployConfigOf, infraSecretsIn, previewProblemsOf, type WranglerConfig } from "./previewGuard.ts"
 
@@ -141,6 +143,26 @@ export const secretPayloadOf = (names: string[], available: Record<string, strin
   return missing.length ? { missing } : { payload: Object.fromEntries(names.map((name) => [name, available[name] as string])) }
 }
 
+/** the wrangler deploy args for a preview; the secrets go up with the deploy when there's a file */
+export const deployArgsOf = ({ marker, secretsFile }: { marker: string; secretsFile?: string }) => [
+  "deploy", "--config", "wrangler.json", "--env", "feature", "--var", `${previewMarker}:${marker}`,
+  ...(secretsFile ? ["--secrets-file", secretsFile] : []),
+]
+
+/** run with the payload in a 0600 secrets.json inside a 0700 temp dir, always removed again; no payload, no file */
+export const withSecretsFile = <T>(payload: Record<string, string>, run: (secretsFile?: string) => T, tempRoot = process.env.RUNNER_TEMP ?? "/tmp"): T => {
+  if (!Object.keys(payload).length) return run(undefined)
+  const directory = mkdtempSync(join(tempRoot, "bot-ci-secrets-"))
+  try {
+    chmodSync(directory, 0o700)
+    const secretsFile = join(directory, "secrets.json")
+    writeFileSync(secretsFile, JSON.stringify(payload), { mode: 0o600, flag: "wx" })
+    return run(secretsFile)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
+
 const statusIcon: Record<DeployStatus, string> = { success: "🟢", failed: "🔴", skipped: "⚪" }
 const transparentPixel = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
 
@@ -183,7 +205,7 @@ const commentFailure = async (repository: string, number: number) => {
 /** a label safe to show in the PR description */
 const safeLabelOf = (label: string) => label.replace(/[^\w.-]/g, "-").slice(0, 60) || "app"
 
-/** check one bundled app, then deploy it and push its secrets; returns its row */
+/** check one bundled app, then deploy it with its secrets; returns its row */
 const deployTarget = (target: PreviewManifest["targets"][number], context: { wrangler: string; artifact: string; version: string; zone: string; marker: string; secrets: Record<string, string | undefined> }): PreviewRow => {
   const label = safeLabelOf(target.label)
   const fail = (reason: string): PreviewRow => {
@@ -216,8 +238,7 @@ const deployTarget = (target: PreviewManifest["targets"][number], context: { wra
   const options = { cwd: stage, env: { ...process.env, ENV: "feature" } }
   console.log(`::group::deploy ${label} (env feature, ${context.version}) → ${urls.join(", ") || "no route"}`)
   try {
-    execFileSync(context.wrangler, ["deploy", "--config", "wrangler.json", "--env", "feature", "--var", `${previewMarker}:${context.marker}`], { ...options, stdio: "inherit" })
-    if (names.length) execFileSync(context.wrangler, ["secret", "bulk", "--config", "wrangler.json", "--env", "feature"], { ...options, input: JSON.stringify(secrets.payload), stdio: ["pipe", "inherit", "inherit"] })
+    withSecretsFile(secrets.payload, (secretsFile) => execFileSync(context.wrangler, deployArgsOf({ marker: context.marker, secretsFile }), { ...options, stdio: "inherit" }))
     return { label, status: "success", url: urls[0] }
   } catch {
     console.log(`::error::preview deploy failed for ${label}`)

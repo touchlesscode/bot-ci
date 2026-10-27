@@ -1,6 +1,6 @@
 import type { Verdict } from "./types.ts"
 
-/** the check second look puts on a pr it was asked to review, named like the old required check */
+/** the check second look puts on a pr it reviews, named like the old required check */
 export const checkName = "Second Look (beta)"
 
 /** the body that opens the check on the pr's head while the review runs */
@@ -16,14 +16,16 @@ export const checkStartOf = ({ headSha, detailsUrl, requestedBy }: { headSha: st
 })
 
 /**
- * the body that closes the check with the review's outcome: a pass is green and anything else
- * neutral, unless enforcing, where a block (the review requests changes either way) or a failed review is red
+ * the body that closes the check with the review's outcome. outside the beta scope the check is informational: a pass
+ * is green ("no changes requested", never an approval) and anything else neutral, never red. on a beta-enabled pr it
+ * enforces: a pass is an approval, and a block (the review requests changes either way) or a failed review is red
  */
-export const checkEndOf = ({ verdict, error, enforcing, commentUrl }: { verdict?: Verdict; error?: string; enforcing: boolean; commentUrl?: string }) => {
+export const checkEndOf = ({ verdict, error, betaEnabled, commentUrl }: { verdict?: Verdict; error?: string; betaEnabled: boolean; commentUrl?: string }) => {
   const link = commentUrl ? `\n\n[The review](${commentUrl})` : ""
-  if (error || !verdict) return { status: "completed", conclusion: enforcing ? "failure" : "neutral", output: { title: "Couldn't review", summary: `${error ?? "no verdict"}${link}` } }
-  if (verdict.verdict === "pass") return { status: "completed", conclusion: "success", output: { title: "Approved", summary: `${verdict.summary}${link}` } }
-  return { status: "completed", conclusion: enforcing ? "failure" : "neutral", output: { title: "Changes requested", summary: `${verdict.summary}${link}` } }
+  const notPassing = betaEnabled ? "failure" : "neutral"
+  if (error || !verdict) return { status: "completed", conclusion: notPassing, output: { title: "Couldn't review", summary: `${error ?? "no verdict"}${link}` } }
+  if (verdict.verdict === "pass") return { status: "completed", conclusion: "success", output: { title: betaEnabled ? "Approved" : "No changes requested", summary: `${verdict.summary}${link}` } }
+  return { status: "completed", conclusion: notPassing, output: { title: "Changes requested", summary: `${verdict.summary}${link}` } }
 }
 
 /** the body that closes a check whose run didn't get to a review (cancelled by a newer request, or a job failed) */
