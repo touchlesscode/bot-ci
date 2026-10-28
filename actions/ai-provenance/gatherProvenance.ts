@@ -38,7 +38,7 @@ export const gatherProvenance = async ({ github, repository, number, appSlug, ap
 
   const reviewsResponse = await github("GET", `/repos/${repository}/pulls/${number}/reviews?per_page=100`)
   const reviews = reviewsResponse.status === 200 ? (reviewsResponse.json as { user?: { login?: string }; state?: string; commit_id?: string }[]).map((review) => ({ user: review.user?.login ?? "", state: review.state ?? "", commit_id: review.commit_id ?? "" })) : []
-  const verdict = secondLookVerdictOf(checkRuns.map((run) => ({ name: run.name, conclusion: run.conclusion, head_sha: run.head_sha, app_slug: run.app?.slug })), reviews, headSha)
+  const verdict = secondLookVerdictOf(checkRuns.map((run) => ({ name: run.name, conclusion: run.conclusion, head_sha: run.head_sha, app_slug: run.app?.slug, external_id: run.external_id })), reviews, headSha)
 
   const events = await github("GET", `/repos/${repository}/issues/${number}/events?per_page=100`)
   const recorded = events.status === 200 && everLabeledOf(events.json as { event?: string; label?: { name?: string } }[], "second-look-beta")

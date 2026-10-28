@@ -11,6 +11,7 @@
  * PR_LINT_BOT_LOGINS (comma-separated, default touchless-bot[bot]).
  */
 import { appendFileSync, readFileSync } from "node:fs"
+import { appLogin, reviewerLogin } from "../second-look/betaScopeNames.ts"
 
 export type PullRequestText = { title: string; body: string; branch: string }
 
@@ -22,7 +23,7 @@ const semanticTitle = /^(feat|fix|docs|style|refactor|test|chore|build|ci|perf)(
 const ticketSuffix = /\| (EXO-\d+|NO-TICKET)$/
 const jiraReference = /^(EXO-\d+|\[EXO-\d+\]\(https?:\/\/[^/\s]+\/browse\/EXO-\d+\)|https?:\/\/[^/\s]+\/browse\/EXO-\d+|N\/A|NO-TICKET)$/i
 const harnessMarker = /<!--\s*harness:\s*(claude|codex)\s*-->/i
-const defaultBotLogins = ["touchless-bot[bot]", "clanker-in-chief"]
+const defaultBotLogins = [appLogin, reviewerLogin]
 
 const sections: Section[] = [
   {

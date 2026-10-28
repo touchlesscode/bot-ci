@@ -46,6 +46,7 @@ import { headlineOf } from "./headlineOf.ts"
 import { postReview } from "./postReview.ts"
 import { postStickyComment } from "./postStickyComment.ts"
 import { requestReviewer } from "./requestReviewer.ts"
+import { appLogin, posterLogin } from "./reviewerLogins.ts"
 import { reviewBodyOf } from "./reviewBodyOf.ts"
 import { reviewEventOf } from "./reviewEventOf.ts"
 import { routeFindingsOf } from "./routeFindingsOf.ts"
@@ -68,8 +69,6 @@ import { verdictOf } from "./verdictOf.ts"
 
 const maxPromptDiffChars = 120_000
 const families: Family[] = ["openai", "anthropic"]
-const posterLogin = "clanker-in-chief"
-const appLogin = "touchless-bot[bot]"
 
 const keyOf = (family: Family) => process.env[`SECOND_LOOK_${family.toUpperCase()}_API_KEY`] ?? ""
 const modelOf = (family: Family) => process.env[`SECOND_LOOK_${family.toUpperCase()}_MODEL`] || defaultModels[family]
