@@ -3,22 +3,15 @@ import type { Verdict } from "./types.ts"
 /** the check second look puts on a pr it reviews, named like the old required check */
 export const checkName = "Second Look (beta)"
 
-/** the `external_id` of a beta-enabled run's check, so a gate can tell it from an informational one (infra/bot-ci/actions/second-look/betaScopeNames.ts) */
-export const betaExternalId = "second-look-beta"
-
-/**
- * the body that opens the check on the pr's head while the review runs. a beta-enabled run's check carries
- * `betaExternalId` and says its verdict counts
- */
-export const checkStartOf = ({ headSha, detailsUrl, requestedBy, betaEnabled = false }: { headSha: string; detailsUrl: string; requestedBy?: string; betaEnabled?: boolean }) => ({
+/** the body that opens the check on the pr's head while the review runs */
+export const checkStartOf = ({ headSha, detailsUrl, requestedBy }: { headSha: string; detailsUrl: string; requestedBy?: string }) => ({
   name: checkName,
   head_sha: headSha,
   status: "in_progress",
   details_url: detailsUrl,
-  ...(betaEnabled ? { external_id: betaExternalId } : {}),
   output: {
-    title: betaEnabled ? "Reviewing (beta scope)" : "Reviewing",
-    summary: `${requestedBy ? `Requested by @${requestedBy}. ` : ""}An OpenAI and an Anthropic tester try the PR's test plan by hand (on its previews, canary packages or a sandbox build), then a main reviewer checks the change against its ticket and the repo's docs. The review lands as a comment on the PR in about 20-30 minutes.${betaEnabled ? " This PR is in Second Look's beta scope, so the review approves or requests changes and this check goes green or red. A person still approves the merge." : ""}`,
+    title: "Reviewing",
+    summary: `${requestedBy ? `Requested by @${requestedBy}. ` : ""}An OpenAI and an Anthropic tester try the PR's test plan by hand (on its previews, canary packages or a sandbox build), then a main reviewer checks the change against its ticket and the repo's docs. The review lands as a comment on the PR in about 20-30 minutes.`,
   },
 })
 

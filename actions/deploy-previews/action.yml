@@ -1,5 +1,5 @@
 name: bot-ci deploy previews
-description: Deploys the preview bundles the bot-ci checks job made, on a runner that never checks out or runs the PR's code. Refuses anything that isn't <app>-<version> on <app>-<version>.<zone>, and never pushes infra secrets into a preview. An app's secrets/preview.enc.yaml is decrypted in memory with sops and the preview age key, never written out
+description: Deploys the preview bundles the bot-ci checks job made, on a runner that never checks out or runs the PR's code. Refuses anything that isn't <app>-<version> on <app>-<version>.<zone>, and never pushes infra secrets into a preview
 inputs:
   github-token:
     required: true
@@ -15,18 +15,6 @@ inputs:
   preview-zone:
     required: false
     default: touchlessapis.com
-  sops-age-key:
-    description: "the org secret SOPS_AGE_KEY_PREVIEW: the age identity of the ci-previews role, a recipient of preview secrets only. empty: encrypted files are left alone"
-    required: false
-    default: ""
-  sops-version:
-    description: "the sops release to install (getsops/sops), checked against that release's checksums file"
-    required: false
-    default: v3.10.2
-outputs:
-  urls:
-    description: "JSON list of the deployed previews, { label, root, url }, for the E2E job"
-    value: ${{ steps.deploy.outputs.urls }}
 runs:
   using: composite
   steps:
@@ -39,28 +27,7 @@ runs:
         path: ${{ runner.temp }}/bot-ci-previews
     - shell: bash
       run: npm install --prefix "$RUNNER_TEMP/bot-ci-wrangler" --no-audit --no-fund --silent wrangler@4.147.0
-    # only when some app shipped an encrypted file and the key is set; outside any checkout, like wrangler
-    - id: sops
-      if: inputs.sops-age-key != ''
-      shell: bash
-      env:
-        SOPS_VERSION: ${{ inputs.sops-version }}
-      run: |
-        set -euo pipefail
-        compgen -G "$RUNNER_TEMP/bot-ci-previews/*/preview.enc.yaml" > /dev/null || { echo "no app ships secrets/preview.enc.yaml; sops not needed"; exit 0; }
-        [[ "$SOPS_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::sops-version must look like v3.10.2"; exit 1; }
-        case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) echo "::error::no sops build for $(uname -m)"; exit 1 ;; esac
-        directory="$RUNNER_TEMP/bot-ci-sops"
-        mkdir -p "$directory" && cd "$directory"
-        binary="sops-$SOPS_VERSION.linux.$arch"
-        base="https://github.com/getsops/sops/releases/download/$SOPS_VERSION"
-        curl -fsSLo "$binary" "$base/$binary"
-        curl -fsSLo checksums.txt "$base/sops-$SOPS_VERSION.checksums.txt"
-        grep " $binary\$" checksums.txt | sha256sum --check --strict -
-        install -m 755 "$binary" sops
-        echo "path=$directory/sops" >> "$GITHUB_OUTPUT"
-    - id: deploy
-      shell: bash
+    - shell: bash
       env:
         CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token }}
         CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
@@ -69,7 +36,5 @@ runs:
         BOT_CI_PREVIEW_ZONE: ${{ inputs.preview-zone }}
         BOT_CI_PREVIEWS_DIRECTORY: ${{ runner.temp }}/bot-ci-previews
         BOT_CI_WRANGLER: ${{ runner.temp }}/bot-ci-wrangler/node_modules/.bin/wrangler
-        BOT_CI_SOPS: ${{ steps.sops.outputs.path }}
-        BOT_CI_SOPS_AGE_KEY: ${{ inputs.sops-age-key }}
         WRANGLER_SEND_METRICS: "false"
       run: node "$GITHUB_ACTION_PATH/../ci/deployPreviews.ts"

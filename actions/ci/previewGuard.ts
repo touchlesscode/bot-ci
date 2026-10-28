@@ -21,7 +21,7 @@ export type WranglerConfig = WorkerEnv & { env?: Record<string, WorkerEnv | unde
 export type BundleLayout = { mainFile: string; hasAssets: boolean }
 
 /** secrets that run the org's infra; a preview never gets them, whatever config.exo.secrets lists */
-export const infraSecretPattern = /^(CLOUDFLARE_|SECOND_LOOK_|ARCH_GOVERNOR_|GITHUB_|ACTIONS_|RUNNER_|BOT_CI_|ORG_CI_|NPM_|NODE_AUTH_|SOPS_|AGE_|PACKAGES_READ_TOKEN$)/
+export const infraSecretPattern = /^(CLOUDFLARE_|SECOND_LOOK_|ARCH_GOVERNOR_|GITHUB_|ACTIONS_|RUNNER_|BOT_CI_|ORG_CI_|NPM_|NODE_AUTH_)/
 
 /** keys that make wrangler run or bundle code locally, or point it at files the deploy job doesn't have */
 const localBuildKeys = ["build", "main", "no_bundle", "find_additional_modules", "base_dir", "rules", "alias", "define", "tsconfig", "minify", "$schema"]

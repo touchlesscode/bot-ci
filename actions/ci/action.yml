@@ -1,5 +1,5 @@
 name: bot-ci build
-description: For repos with no pull request CI of their own — exo's pipeline (nx affected, pnpm cache, GitHub Packages) or the repo's own scripts, the coverage gate, then bundles exo-style staging previews (wrangler env.feature) of affected Cloudflare Worker apps for the previews job. With `e2e-previews` set it installs the same way and runs the repo's Playwright `test:e2e` against each deployed preview instead (the E2E job). Runs the PR's code, so its only secret is the packages read token, and only in the scripts-off install
+description: For repos with no pull request CI of their own — exo's pipeline (nx affected, pnpm cache, GitHub Packages) or the repo's own scripts, then bundles exo-style staging previews (wrangler env.feature) of affected Cloudflare Worker apps for the previews job. Runs the PR's code, so its only secret is the packages read token, and only in the scripts-off install
 inputs:
   github-token:
     required: true
@@ -11,25 +11,10 @@ inputs:
     description: "'true' to bundle previews (same-repo pull requests, not dependabot)"
     required: false
     default: "false"
-  coverage:
-    description: "the org variable BOT_CI_COVERAGE: enforce, evaluate (default) or off (actions/coverage)"
-    required: false
-    default: evaluate
-  patch-coverage-repos:
-    description: "the org variable BOT_CI_PATCH_COVERAGE_REPOS: repo names that get patch coverage instead of full (empty: apps)"
-    required: false
-    default: ""
-  e2e-previews:
-    description: "the E2E job: the previews job's JSON list of { label, root, url }. set, this installs and runs test:e2e against each instead of the checks"
-    required: false
-    default: ""
 outputs:
   previews:
     description: "'true' when there are preview bundles for the previews job"
     value: ${{ steps.bundle.outputs.previews }}
-  e2e:
-    description: "'true' when the repo's root package.json declares test:e2e"
-    value: ${{ steps.plan.outputs.e2e }}
 runs:
   using: composite
   steps:
@@ -39,7 +24,7 @@ runs:
     - id: plan
       shell: bash
       run: node "$GITHUB_ACTION_PATH/planChecks.ts"
-    - if: steps.plan.outputs.skip != 'true' && steps.plan.outputs.nx == 'true' && inputs.e2e-previews == ''
+    - if: steps.plan.outputs.skip != 'true' && steps.plan.outputs.nx == 'true'
       uses: nrwl/nx-set-shas@v5
       with:
         main-branch-name: ${{ github.event.repository.default_branch }}
@@ -66,22 +51,14 @@ runs:
         INSTALL: ${{ steps.plan.outputs.install }}
         NODE_AUTH_TOKEN: ${{ steps.guard.outcome == 'success' && inputs.packages-token || inputs.github-token }}
       run: bash "$GITHUB_ACTION_PATH/runChecks.sh" install
-    - if: steps.plan.outputs.skip != 'true' && inputs.e2e-previews == ''
+    - if: steps.plan.outputs.skip != 'true'
       shell: bash
       env:
         POSTINSTALL: ${{ steps.plan.outputs.postinstall }}
         CHECKS: ${{ steps.plan.outputs.checks }}
       run: bash "$GITHUB_ACTION_PATH/runChecks.sh" checks
-    # after the checks even when one failed, so the summary says what coverage was; data only, no token
-    - if: ${{ !cancelled() && steps.plan.outputs.skip != 'true' && inputs.e2e-previews == '' }}
-      shell: bash
-      env:
-        BOT_CI_COVERAGE: ${{ inputs.coverage }}
-        BOT_CI_COVERAGE_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-        BOT_CI_PATCH_COVERAGE_REPOS: ${{ inputs.patch-coverage-repos }}
-      run: node "$GITHUB_ACTION_PATH/../coverage/coverageGate.ts"
     - id: bundle
-      if: steps.plan.outputs.skip != 'true' && github.event_name == 'pull_request' && inputs.previews == 'true' && inputs.e2e-previews == ''
+      if: steps.plan.outputs.skip != 'true' && github.event_name == 'pull_request' && inputs.previews == 'true'
       shell: bash
       env:
         NODE_AUTH_TOKEN: ${{ inputs.github-token }}
@@ -96,25 +73,4 @@ runs:
         path: ${{ runner.temp }}/bot-ci-previews
         retention-days: 3
         if-no-files-found: error
-        overwrite: true
-    - if: steps.plan.outputs.skip != 'true' && inputs.e2e-previews != ''
-      shell: bash
-      env:
-        POSTINSTALL: ${{ steps.plan.outputs.postinstall }}
-        BOT_CI_PACKAGE_MANAGER: ${{ steps.plan.outputs.package-manager }}
-        BOT_CI_E2E_PREVIEWS: ${{ inputs.e2e-previews }}
-      run: |
-        unset NODE_AUTH_TOKEN
-        if [[ -n "$POSTINSTALL" ]]; then bash -c "$POSTINSTALL"; fi
-        node "$GITHUB_ACTION_PATH/../e2e/runE2e.ts"
-    - if: ${{ !cancelled() && steps.plan.outputs.skip != 'true' && inputs.e2e-previews != '' }}
-      uses: actions/upload-artifact@v5
-      with:
-        name: playwright-report
-        path: |
-          **/playwright-report/
-          **/test-results/
-          !**/node_modules/**
-        retention-days: 14
-        if-no-files-found: ignore
         overwrite: true

@@ -6,12 +6,11 @@
  * architecture, reviews the diff against all that and the rules, folds in both
  * testers' reports, and follows up on its own open threads from earlier runs: a fixed one
  * gets a reply and is resolved, a changed one gets a reply, and nothing is posted twice.
- * then it submits one review as clanker-in-chief: request changes on a block, a comment when it couldn't review, and on
- * a pass a comment, or an approval only when the relay dispatched the run for a beta-enabled pr (SECOND_LOOK_BETA_ENABLED,
- * reviewEventOf.ts), with the new findings that sit on the diff as inline comments. then one sticky pr comment, and it
- * closes the pr's check with the outcome: outside the beta scope informational (green on a pass, neutral otherwise,
- * never red), on a beta-enabled pr green on a pass and red otherwise. it never runs pr code. exits 1 only when it
- * crashes before closing the check, so the workflow's wrap-up closes it instead.
+ * then it submits one review as clanker-in-chief: request changes on a block, a comment on a pass or when it couldn't
+ * review (outside the beta scope it never approves, reviewEventOf.ts), with the new findings that sit on the diff as
+ * inline comments. then one sticky pr comment, and it closes the pr's check with the outcome, which is informational:
+ * green on a pass, neutral otherwise, never red. it never runs pr code. exits 1 only when it crashes before closing
+ * the check, so the workflow's wrap-up closes it instead.
  *
  *   node synthesize.ts   (in the workflow, cwd = the pr's repo checked out at its base, with the head fetched)
  *
@@ -19,7 +18,7 @@
  * GITHUB_TOKEN (the touchless bot app: contents read, issues + pull requests write on the pr's repo),
  * SECOND_LOOK_CHECKS_TOKEN (the app with checks write; blank when the app lacks it, then there's no check),
  * SECOND_LOOK_EVENT_PATH (the pr, see targetOf.ts), RUNNER_TEMP, SECOND_LOOK_ANTHROPIC_API_KEY and/or
- * SECOND_LOOK_OPENAI_API_KEY, optional SECOND_LOOK_ANTHROPIC_MODEL, SECOND_LOOK_OPENAI_MODEL, SECOND_LOOK_BETA_ENABLED,
+ * SECOND_LOOK_OPENAI_API_KEY, optional SECOND_LOOK_ANTHROPIC_MODEL, SECOND_LOOK_OPENAI_MODEL,
  * SECOND_LOOK_REPORTS_DIRECTORY (the testers' downloaded reports), SECOND_LOOK_DEFAULT_RULES,
  * SECOND_LOOK_REQUESTED_BY, SECOND_LOOK_BUDGET_USD (default 3), SECOND_LOOK_TIMEOUT_MINUTES (default 15),
  * SECOND_LOOK_CONTEXT_DIRECTORY (gatherContext.ts's output), SECOND_LOOK_CHECK_RUN_ID (the check to close).
@@ -28,7 +27,6 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { architectureDocsOf } from "./architectureDocsOf.ts"
-import { betaEnabledOf } from "./betaEnabledOf.ts"
 import { childEnvironmentOf } from "./childEnvironmentOf.ts"
 import { cliCommandOf, defaultModels } from "./cliCommandOf.ts"
 import { commentBodyOf, commentMarker } from "./commentBodyOf.ts"
@@ -56,7 +54,6 @@ import { prepareAuth } from "./prepareAuth.ts"
 import { storedReportOf } from "./reportOf.ts"
 import { reviewerFamilyOf } from "./reviewerFamilyOf.ts"
 import { repoRulePaths, rulesOf } from "./rulesOf.ts"
-import { withTestingRules } from "./withTestingRules.ts"
 import { runCli } from "./runCli.ts"
 import { verdictSchema } from "./schemas.ts"
 import { checkEndOf } from "./checkRunBodyOf.ts"
@@ -141,13 +138,13 @@ const main = async () => {
     truncated: capped.truncated,
     diffPath,
     docs: architectureDocsOf({ repo: directorySnapshot(process.cwd()), changedPaths }),
-    rules: withTestingRules(rulesOf([...repoRulePaths, process.env.SECOND_LOOK_DEFAULT_RULES]), process.env.SECOND_LOOK_TESTING_RULES),
+    rules: rulesOf([...repoRulePaths, process.env.SECOND_LOOK_DEFAULT_RULES]),
     reports,
     context: existsSync(contextPath) ? readFileSync(contextPath, "utf8") : "",
     earlier: earlierSectionOf({ threads, headFiles }),
   })
   const { verdict, error } = await review({ reviewer, prompt }).catch((failure: Error) => ({ verdict: undefined, error: failure.message }))
-  const betaEnabled = betaEnabledOf(process.env.SECOND_LOOK_BETA_ENABLED)
+  const betaEnabled = false
   const warn = (line: string) => console.log(`::warning title=Second Look (beta)::${line}`)
   const wasRequested = await isRequestedReviewer({ token: appToken, repository, number: pull.number, login: author })
   const { inline } = inlineCommentsOf({ findings: verdict?.findings ?? [], commentable: commentableLinesOf(diff), reviewer })
@@ -171,7 +168,7 @@ const main = async () => {
   const onDiff = new Set(reviewUrl ? fresh.map(({ finding }) => finding) : [])
   const replied = followUps.some(({ status }) => status !== "open") || onThread.length > 0
   if (wasRequested && (reviewUrl || replied)) await requestReviewer({ token: appToken, repository, number: pull.number, login: author }).catch((failure: Error) => warn(failure.message))
-  const body = commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, headSha: pull.head.sha, scopeReason: betaEnabled ? "beta scope" : process.env.SECOND_LOOK_REQUESTED_BY ? `requested by @${process.env.SECOND_LOOK_REQUESTED_BY}` : "requested", onDiff, reviewUrl, followUps, betaEnabled })
+  const body = commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, headSha: pull.head.sha, scopeReason: process.env.SECOND_LOOK_REQUESTED_BY ? `requested by @${process.env.SECOND_LOOK_REQUESTED_BY}` : "requested", onDiff, reviewUrl, followUps, betaEnabled })
   console.log(body)
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${body}\n`)
   const commentUrl = await postStickyComment({ token: postToken, repository, number: pull.number, body, marker: commentMarker, author })
