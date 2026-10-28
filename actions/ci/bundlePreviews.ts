@@ -5,7 +5,8 @@
  * `${VERSION}` / `${DEPLOY_ID}` and bundles the worker with the repo's own wrangler
  * (`wrangler deploy --dry-run --outdir`, which needs no token). the bundles, configs and
  * assets become the `bot-ci-previews` artifact; the previews job, on a fresh runner that never
- * runs PR code, checks and deploys them (deployPreviews.ts).
+ * runs PR code, checks and deploys them (deployPreviews.ts). an app's `secrets/preview.enc.yaml`
+ * (or the repo's) rides along still encrypted: only the previews job has the age key to open it.
  *
  *   node bundlePreviews.ts   (in the action; cwd = the checked-out repo)
  *
@@ -15,7 +16,7 @@
 import { execFileSync } from "node:child_process"
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { basename, dirname, extname, join, resolve } from "node:path"
-import { deployIdOf, fillPlaceholders, parseJsonc, previewTargetsOf, secretNamesOf, versionOf, type PreviewManifest, type PreviewTarget } from "./deployPreviews.ts"
+import { deployIdOf, fillPlaceholders, parseJsonc, previewSecretsFile, previewTargetsOf, secretNamesOf, versionOf, type PreviewManifest, type PreviewTarget } from "./deployPreviews.ts"
 import { effectiveAssetsOf, type WranglerConfig } from "./previewGuard.ts"
 
 const commandOf = (prefix: string) => prefix.split(" ")
@@ -50,11 +51,19 @@ const mainFileOf = (bundleDirectory: string, main: string | undefined) => {
   return readdirSync(bundleDirectory).find((file) => /\.m?js$/.test(file))
 }
 
+/** the app's sops-encrypted preview secrets: its own `secrets/preview.enc.yaml`, else the repo's */
+const previewSecretsFileOf = (root: string) => [join(root, previewSecretsFile), previewSecretsFile].find((path) => existsSync(path))
+
 /** fill in and bundle one app into `<staging>/<index>/`; returns its manifest entry */
 const bundleTarget = (target: PreviewTarget, index: number, context: { execPrefix: string; version: string; deployId: string; staging: string }): PreviewManifest["targets"][number] => {
   const configText = fillPlaceholders(readFileSync(target.config, "utf8"), context)
   writeFileSync(target.config, configText)
-  const base = { label: target.label, index, configText }
+  const encrypted = previewSecretsFileOf(target.root)
+  if (encrypted) {
+    mkdirSync(resolve(context.staging, String(index)), { recursive: true })
+    cpSync(encrypted, resolve(context.staging, String(index), "preview.enc.yaml"), { dereference: true })
+  }
+  const base = { label: target.label, index, configText, root: target.root, ...(encrypted ? { sopsFile: true } : {}) }
   try {
     const packagePath = join(dirname(target.config), "package.json")
     const secretNames = existsSync(packagePath) ? secretNamesOf(JSON.parse(readFileSync(packagePath, "utf8"))) : []

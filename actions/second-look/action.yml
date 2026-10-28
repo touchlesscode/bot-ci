@@ -22,6 +22,9 @@ inputs:
   requested-by:
     description: "the GitHub login that asked for it"
     required: false
+  beta-enabled:
+    description: "prepare, synthesize: `true` when the relay dispatched this run for a beta-enabled PR. Then a pass approves and the check goes green or red; anything else is a normal run that never approves and whose check is never red"
+    required: false
   head-sha:
     description: "synthesize: the commit prepare bundled, so both look at the same one"
     required: false
@@ -92,6 +95,7 @@ runs:
         SECOND_LOOK_REPOSITORY: ${{ inputs.repository }}
         SECOND_LOOK_HEAD_SHA: ${{ steps.pull.outputs.head-sha }}
         SECOND_LOOK_REQUESTED_BY: ${{ inputs.requested-by }}
+        SECOND_LOOK_BETA_ENABLED: ${{ inputs.beta-enabled }}
     - if: inputs.step != 'abandon'
       uses: actions/checkout@v7
       with:
@@ -169,6 +173,7 @@ runs:
         SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
         SECOND_LOOK_CHECK_RUN_ID: ${{ inputs.check-run-id }}
         SECOND_LOOK_REQUESTED_BY: ${{ inputs.requested-by }}
+        SECOND_LOOK_BETA_ENABLED: ${{ inputs.beta-enabled }}
         SECOND_LOOK_CONTEXT_DIRECTORY: ${{ runner.temp }}/second-look-inputs/context
         SECOND_LOOK_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         SECOND_LOOK_OPENAI_API_KEY: ${{ inputs.openai-api-key }}
@@ -177,6 +182,7 @@ runs:
         SECOND_LOOK_BUDGET_USD: ${{ inputs.budget-usd }}
         SECOND_LOOK_REPORTS_DIRECTORY: ${{ runner.temp }}/second-look-reports
         SECOND_LOOK_DEFAULT_RULES: ${{ github.action_path }}/rules.md
+        SECOND_LOOK_TESTING_RULES: ${{ github.action_path }}/testingRules.md
     - if: inputs.step == 'abandon' && inputs.checks-token != '' && inputs.check-run-id != ''
       shell: bash
       run: node "$GITHUB_ACTION_PATH/checkRun.ts" abandon

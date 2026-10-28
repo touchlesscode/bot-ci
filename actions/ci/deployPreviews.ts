@@ -12,9 +12,12 @@
  * - uploads the secrets the app lists in package.json `config.exo.secrets` with the deploy
  *   itself (`wrangler deploy --secrets-file`, a 0600 file in a temp dir removed right after),
  *   so a new worker whose config declares required secrets deploys on its first run; never
- *   infra secrets (Cloudflare, model keys)
+ *   infra secrets (Cloudflare, model keys). values come from the repo's GitHub secrets and, when
+ *   the app ships `secrets/preview.enc.yaml`, from that file, decrypted by sops with the org secret
+ *   SOPS_AGE_KEY_PREVIEW (the file wins on a shared name)
  * - writes exo's Preview Deployments table into the PR description; a failed deploy also
  *   gets exo's failure comment
+ * - hands the deployed previews ({ label, root, url }) to the E2E job as the `urls` output
  *
  * previews also carry the plain-text binding BOT_CI_PREVIEW=<repo>#<pr>; reapPreviews.ts
  * only ever deletes workers with that binding, so exo's own previews are never touched.
@@ -23,12 +26,14 @@
  *
  * env: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, GITHUB_TOKEN, GITHUB_EVENT_PATH,
  * GITHUB_REPOSITORY, GITHUB_HEAD_REF, BOT_CI_PREVIEWS_DIRECTORY (the downloaded artifact),
- * BOT_CI_WRANGLER (the pinned wrangler binary), BOT_CI_PREVIEW_ZONE, BOT_CI_SECRETS (JSON of the repo's secrets).
+ * BOT_CI_WRANGLER (the pinned wrangler binary), BOT_CI_PREVIEW_ZONE, BOT_CI_SECRETS (JSON of the repo's secrets),
+ * BOT_CI_SOPS (the pinned sops binary) and BOT_CI_SOPS_AGE_KEY (SOPS_AGE_KEY_PREVIEW; never reaches wrangler).
  */
 import { execFileSync } from "node:child_process"
 import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { basename, join } from "node:path"
 import { deployConfigOf, infraSecretsIn, previewProblemsOf, type WranglerConfig } from "./previewGuard.ts"
+import { sopsSecretsOf } from "./sopsSecretsOf.ts"
 
 export type PreviewTarget = { label: string; root: string; config: string }
 
@@ -36,14 +41,21 @@ export type Skipped = { label: string; reason: string }
 
 export type DeployStatus = "success" | "failed" | "skipped"
 
-export type PreviewRow = { label: string; status: DeployStatus; url?: string }
+export type PreviewRow = { label: string; status: DeployStatus; url?: string; root?: string }
 
 /** what the checks job hands the previews job: per app, its filled-in config and how it bundled */
 export type PreviewManifest = {
   version: string
-  targets: { label: string; index: number; configText: string; status: "bundled" | "failed"; reason?: string; secretNames?: string[]; mainFile?: string; hasAssets?: boolean }[]
+  targets: { label: string; index: number; configText: string; status: "bundled" | "failed"; reason?: string; secretNames?: string[]; mainFile?: string; hasAssets?: boolean; root?: string; sopsFile?: boolean }[]
   skipped: Skipped[]
 }
+
+/** an app's (or the repo's) sops + age encrypted preview secrets, decrypted only in the previews job */
+export const previewSecretsFile = "secrets/preview.enc.yaml"
+
+/** the previews the E2E job tests: deployed ones with a url, as { label, root, url } */
+export const e2ePreviewsOutputOf = (rows: PreviewRow[]) =>
+  JSON.stringify(rows.filter((row) => row.status === "success" && row.url && row.root).map(({ label, root, url }) => ({ label, root, url })))
 
 type Route = string | { pattern: string; custom_domain?: boolean }
 
@@ -205,9 +217,24 @@ const commentFailure = async (repository: string, number: number) => {
 /** a label safe to show in the PR description */
 const safeLabelOf = (label: string) => label.replace(/[^\w.-]/g, "-").slice(0, 60) || "app"
 
+/** a repo-relative app directory that's safe to hand on, or undefined */
+const safeRootOf = (root: string | undefined) => (root && /^(?:\.|[\w@.-]+(?:\/[\w@.-]+)*)$/.test(root) && !root.split("/").includes("..") ? root : undefined)
+
+/**
+ * the secrets an app can draw on: the repo's GitHub secrets, overlaid with its decrypted
+ * secrets/preview.enc.yaml when it shipped one and the age key is set. every decrypted value is masked in the log
+ */
+const availableSecretsOf = (target: PreviewManifest["targets"][number], context: { artifact: string; sops?: string; ageKey?: string; secrets: Record<string, string | undefined> }) => {
+  if (!target.sopsFile || !context.sops || !context.ageKey) return context.secrets
+  const decrypted = sopsSecretsOf({ sops: context.sops, file: join(context.artifact, String(target.index), "preview.enc.yaml"), ageKey: context.ageKey })
+  for (const value of Object.values(decrypted)) for (const line of value.split(/\r?\n/).filter((part) => part.trim())) console.log(`::add-mask::${line}`)
+  return { ...context.secrets, ...decrypted }
+}
+
 /** check one bundled app, then deploy it with its secrets; returns its row */
-const deployTarget = (target: PreviewManifest["targets"][number], context: { wrangler: string; artifact: string; version: string; zone: string; marker: string; secrets: Record<string, string | undefined> }): PreviewRow => {
+const deployTarget = (target: PreviewManifest["targets"][number], context: { wrangler: string; artifact: string; version: string; zone: string; marker: string; secrets: Record<string, string | undefined>; sops?: string; ageKey?: string }): PreviewRow => {
   const label = safeLabelOf(target.label)
+  const root = safeRootOf(target.root)
   const fail = (reason: string): PreviewRow => {
     console.log(`::error::preview not deployed for ${label}: ${reason}`)
     return { label, status: "failed" }
@@ -226,8 +253,17 @@ const deployTarget = (target: PreviewManifest["targets"][number], context: { wra
   const names = target.secretNames ?? []
   const infra = infraSecretsIn(names)
   if (infra.length) return fail(`config.exo.secrets lists ${infra.join(", ")}; infra secrets never go into a preview`)
-  const secrets = secretPayloadOf(names, context.secrets)
-  if ("missing" in secrets) return fail(`config.exo.secrets lists ${secrets.missing.join(", ")}, which the repo doesn't have as GitHub secrets`)
+  let available: Record<string, string | undefined>
+  try {
+    available = names.length ? availableSecretsOf(target, context) : context.secrets
+  } catch (error) {
+    return fail(`couldn't decrypt ${previewSecretsFile}: ${(error as Error).message.split("\n")[0]}`)
+  }
+  const secrets = secretPayloadOf(names, available)
+  if ("missing" in secrets) {
+    const keyHint = target.sopsFile && !context.ageKey ? `; it has a ${previewSecretsFile}, but the org secret SOPS_AGE_KEY_PREVIEW isn't set, so it couldn't be decrypted` : ""
+    return fail(`config.exo.secrets lists ${secrets.missing.join(", ")}, which the repo doesn't have as GitHub secrets${target.sopsFile ? ` or in ${previewSecretsFile}` : ""}${keyHint}`)
+  }
   const source = join(context.artifact, String(target.index))
   const stage = mkdtempSync(join(process.env.RUNNER_TEMP ?? "/tmp", "bot-ci-deploy-"))
   cpSync(join(source, "bundle"), join(stage, "bundle"), { recursive: true })
@@ -235,11 +271,12 @@ const deployTarget = (target: PreviewManifest["targets"][number], context: { wra
   if (hasAssets) cpSync(join(source, "assets"), join(stage, "assets"), { recursive: true })
   writeFileSync(join(stage, "wrangler.json"), JSON.stringify(deployConfigOf(config, { mainFile: target.mainFile, hasAssets }), null, 2))
   const urls = previewUrlsOf(config.env?.feature ?? {})
-  const options = { cwd: stage, env: { ...process.env, ENV: "feature" } }
+  const { BOT_CI_SOPS_AGE_KEY: _ageKey, BOT_CI_SECRETS: _secrets, ...environment } = process.env
+  const options = { cwd: stage, env: { ...environment, ENV: "feature" } }
   console.log(`::group::deploy ${label} (env feature, ${context.version}) → ${urls.join(", ") || "no route"}`)
   try {
     withSecretsFile(secrets.payload, (secretsFile) => execFileSync(context.wrangler, deployArgsOf({ marker: context.marker, secretsFile }), { ...options, stdio: "inherit" }))
-    return { label, status: "success", url: urls[0] }
+    return { label, status: "success", url: urls[0], ...(root ? { root } : {}) }
   } catch {
     console.log(`::error::preview deploy failed for ${label}`)
     return { label, status: "failed" }
@@ -265,7 +302,10 @@ const main = async () => {
   if (!existsSync(wrangler)) throw new Error(`no pinned wrangler at "${wrangler}"`)
   mkdirSync(process.env.RUNNER_TEMP ?? "/tmp", { recursive: true })
   const secrets = JSON.parse(process.env.BOT_CI_SECRETS || "{}") as Record<string, string | undefined>
-  const rows = manifest.targets.map((target) => deployTarget(target, { wrangler, artifact, version, zone, marker: `${repository}#${pull.number}`, secrets }))
+  const sops = process.env.BOT_CI_SOPS && existsSync(process.env.BOT_CI_SOPS) ? process.env.BOT_CI_SOPS : undefined
+  const ageKey = process.env.BOT_CI_SOPS_AGE_KEY || undefined
+  const rows = manifest.targets.map((target) => deployTarget(target, { wrangler, artifact, version, zone, marker: `${repository}#${pull.number}`, secrets, sops, ageKey }))
+  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `urls=${e2ePreviewsOutputOf(rows)}\n`)
   const allRows = [...rows, ...manifest.skipped.map((skip): PreviewRow => ({ label: safeLabelOf(skip.label), status: "skipped" }))]
   await updatePullBody(repository, pull.number, previewBlockOf(allRows, new Date()))
   const failed = rows.filter((row) => row.status === "failed")

@@ -5,7 +5,8 @@
  * pull request ci, or isn't a node project.
  * nx workspaces get exo's pipeline: `nx affected -t build|lint|typecheck|test` against
  * nx-set-shas' base, with the local nx cache. other node repos get install plus the
- * lint / typecheck / test / build scripts they declare.
+ * lint / typecheck / test / build scripts they declare. a root `test:coverage` script adds a
+ * coverage check for the coverage gate (actions/coverage), and a root `test:e2e` turns on the E2E job.
  *
  *   node planChecks.ts   (in the action, cwd = the checked-out repo; writes $GITHUB_OUTPUT)
  */
@@ -36,6 +37,8 @@ export type CheckPlan =
       /** the install may get PACKAGES_READ_TOKEN: only pnpm and npm, whose installs run no repo code with scripts off */
       packagesToken: boolean
       checks: Check[]
+      /** the root declares `test:e2e`, so the E2E job runs it against each preview Previews deploys */
+      e2e: boolean
     }
 
 /** read-only view of the checked-out repo, injectable for tests */
@@ -51,6 +54,10 @@ const typecheckScripts = ["typecheck", "type-check", "check-types", "tsc"]
 const nxTargets = ["build", "lint", "typecheck", "test"]
 const placeholderTest = /no test specified/
 const defaultPnpmVersion = "12"
+/** the root script that runs the unit tests with coverage (app-template: vitest `--coverage`, lcov reporter) */
+export const coverageScript = "test:coverage"
+/** the root script that runs Playwright against PREVIEW_URL, which the E2E job runs per previewed app */
+export const e2eScript = "test:e2e"
 
 /** the repo's own ci, if any: a github workflow that runs on pull requests, or another ci system's config */
 export const ownCiOf = (repo: RepoSnapshot): string | undefined => {
@@ -92,7 +99,7 @@ export const postinstallOf = (packageManager: PackageManager, scripts: Record<st
 /** how to run a locally installed binary with each package manager */
 export const execPrefixOf = (packageManager: PackageManager) => ({ pnpm: "pnpm exec", yarn: "yarn", bun: "bunx", npm: "npx --no-install" })[packageManager]
 
-/** lint, the first typecheck-style script, a real test script and build, in that order */
+/** lint, the first typecheck-style script, a real test script, `test:coverage` (the coverage gate's reports) and build, in that order */
 export const checksOf = (packageManager: PackageManager, scripts: Record<string, string> = {}): Check[] => {
   const run = (script: string) => `${packageManager} run ${script}`
   const typecheck = typecheckScripts.find((script) => scripts[script])
@@ -100,13 +107,20 @@ export const checksOf = (packageManager: PackageManager, scripts: Record<string,
     scripts.lint ? { name: "lint", command: run("lint") } : undefined,
     typecheck ? { name: "typecheck", command: run(typecheck) } : undefined,
     scripts.test && !placeholderTest.test(scripts.test) ? { name: "test", command: run("test") } : undefined,
+    scripts[coverageScript] ? { name: "coverage", command: run(coverageScript) } : undefined,
     scripts.build ? { name: "build", command: run("build") } : undefined,
   ].filter((check): check is Check => check !== undefined)
 }
 
-/** exo's order: build first (lint and test depend on it), only the projects affected since NX_BASE */
-export const nxChecksOf = (packageManager: PackageManager): Check[] =>
-  nxTargets.map((target) => ({ name: target, command: `${execPrefixOf(packageManager)} nx affected -t ${target}` }))
+/**
+ * exo's order: build first (lint and test depend on it), only the projects affected since NX_BASE. a root
+ * `test:coverage` script (app-template has one) adds `nx affected -t test:coverage`, whose lcov reports
+ * the coverage gate reads
+ */
+export const nxChecksOf = (packageManager: PackageManager, scripts: Record<string, string> = {}): Check[] => [
+  ...nxTargets.map((target) => ({ name: target, command: `${execPrefixOf(packageManager)} nx affected -t ${target}` })),
+  ...(scripts[coverageScript] ? [{ name: "coverage", command: `${execPrefixOf(packageManager)} nx affected -t ${coverageScript}` }] : []),
+]
 
 /** the node version source: a version file when the repo pins one, else node 24 */
 export const nodeVersionOf = (repo: RepoSnapshot, packageJson: PackageJson): { nodeVersion?: string; nodeVersionFile?: string } => {
@@ -133,13 +147,13 @@ export const planChecks = (repo: RepoSnapshot, { botBuilt }: { botBuilt?: boolea
   try {
     packageJson = JSON.parse(text) as PackageJson
   } catch {
-    return { skip: false, reason: "package.json doesn't parse", packageManager: "npm", locked: false, nx: false, nodeVersion: "24", install: "node -e \"JSON.parse(require('fs').readFileSync('package.json','utf8'))\"", postinstall: "", packagesToken: false, checks: [] }
+    return { skip: false, reason: "package.json doesn't parse", packageManager: "npm", locked: false, nx: false, nodeVersion: "24", install: "node -e \"JSON.parse(require('fs').readFileSync('package.json','utf8'))\"", postinstall: "", packagesToken: false, checks: [], e2e: false }
   }
   const { packageManager, locked } = packageManagerOf(repo, packageJson)
   const nx = repo.exists("nx.json")
-  const checks = nx ? nxChecksOf(packageManager) : checksOf(packageManager, packageJson.scripts)
+  const checks = nx ? nxChecksOf(packageManager, packageJson.scripts) : checksOf(packageManager, packageJson.scripts)
   const reason = nx
-    ? `${packageManager} + nx: install, then nx affected -t ${nxTargets.join(", ")}`
+    ? `${packageManager} + nx: install, then nx affected -t ${[...nxTargets, ...(packageJson.scripts?.[coverageScript] ? [coverageScript] : [])].join(", ")}`
     : checks.length ? `${packageManager}: install, then ${checks.map((check) => check.name).join(", ")}` : `${packageManager}: install only (no lint, typecheck, test or build script)`
   return {
     skip: false,
@@ -153,6 +167,7 @@ export const planChecks = (repo: RepoSnapshot, { botBuilt }: { botBuilt?: boolea
     postinstall: postinstallOf(packageManager, packageJson.scripts),
     packagesToken: packageManager === "pnpm" || packageManager === "npm",
     checks,
+    e2e: Boolean(packageJson.scripts?.[e2eScript]),
   }
 }
 
@@ -177,6 +192,7 @@ export const outputLinesOf = (plan: CheckPlan) => [
     `install=${plan.install}`,
     `postinstall=${plan.postinstall}`,
     `packages-token=${plan.packagesToken}`,
+    `e2e=${plan.e2e}`,
     "checks<<BOT_CI_CHECKS",
     ...plan.checks.map((check) => `${check.name}\t${check.command}`),
     "BOT_CI_CHECKS",
