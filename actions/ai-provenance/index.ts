@@ -19,7 +19,7 @@ import { gatherProvenance } from "./gatherProvenance.ts"
 import { githubOf } from "./githubOf.ts"
 import { pullNumbersOf } from "./pullNumbersOf.ts"
 import { reportOf } from "./reportOf.ts"
-import { isBetaEnabled } from "./secondLookAdapter.ts"
+import { isBetaEnabled } from "../second-look/isBetaEnabled.ts"
 
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 const oneLine = (text: string) => text.replace(/[\r\n]+/g, " ").replace(/::/g, ": :")

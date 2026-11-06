@@ -1,4 +1,4 @@
-export type GithubCall = (method: "GET" | "POST", path: string, body?: unknown) => Promise<{ status: number; json: any }>
+export type GithubCall = (method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown) => Promise<{ status: number; json: any }>
 
 /** a minimal github rest client with the job token; network failures resolve as status 0 */
 export const githubOf = (token: string, apiUrl = "https://api.github.com", fetchImpl: typeof fetch = fetch): GithubCall => async (method, path, body) => {

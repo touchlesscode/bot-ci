@@ -3,7 +3,7 @@ import { summaryFieldsOf } from "./summaryFieldsOf.ts"
 /** the check run the touchless-bot MCP (or a bot worker) puts on a head commit it submitted */
 export const attestationName = "Touchless Bot MCP"
 
-export type CheckRun = { name: string; head_sha: string; status?: string; conclusion: string | null; app?: { slug?: string; id?: number } | null; output?: { summary?: string | null } | null }
+export type CheckRun = { name: string; head_sha: string; status?: string; conclusion: string | null; app?: { slug?: string; id?: number } | null; external_id?: string | null; output?: { summary?: string | null } | null }
 
 export type Attestation = { attested: true; lane?: string; requester?: string; ticket?: string; via?: string } | { attested: false; reason: string }
 
