@@ -1,5 +1,5 @@
 import type { Attestation } from "./attestationOf.ts"
-import type { SecondLookVerdict } from "./secondLookAdapter.ts"
+import type { SecondLookVerdict } from "../second-look/betaScopeTypes.ts"
 
 /** the failure text for a harness-made pr without a current attestation (exact; people search for it) */
 export const outsideMcpFailure = "made by a personal harness outside the touchless-bot MCP: resubmit with open_pr / update_pr"
