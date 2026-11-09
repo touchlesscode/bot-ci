@@ -4,6 +4,7 @@
  * (apps/exo-cli/src/cicd/utils/runPrLinting.ts), without its dependencies:
  *   title  `type(scope): description | EXO-1234` (or `| NO-TICKET`)
  *   body   `## Summary`, `### Jira Ticket Reference` (a valid EXO key/link, N/A or NO-TICKET), `### Test Plan`
+ * plus one rule of its own: a pr the bot opened or drove can't carry exo's skip tokens (`[skip-checks]`, `[skip e2e]`)
  *
  *   node lintPullRequest.ts   (in the action; reads $GITHUB_EVENT_PATH)
  *
@@ -11,8 +12,11 @@
  * PR_LINT_BOT_LOGINS (comma-separated, default touchless-bot[bot]).
  */
 import { appendFileSync, readFileSync } from "node:fs"
+import { appLogin, reviewerLogin } from "../second-look/betaScopeNames.ts"
+import { skipTokensOf } from "./skipTokensOf.ts"
 
-export type PullRequestText = { title: string; body: string; branch: string }
+/** a pr's text; `bot` (default true) is whether the bot opened or drove it, which bans exo's skip tokens */
+export type PullRequestText = { title: string; body: string; branch: string; bot?: boolean }
 
 export type LintResult = { skipped?: string; errors: { title: string; message: string }[] }
 
@@ -22,7 +26,7 @@ const semanticTitle = /^(feat|fix|docs|style|refactor|test|chore|build|ci|perf)(
 const ticketSuffix = /\| (EXO-\d+|NO-TICKET)$/
 const jiraReference = /^(EXO-\d+|\[EXO-\d+\]\(https?:\/\/[^/\s]+\/browse\/EXO-\d+\)|https?:\/\/[^/\s]+\/browse\/EXO-\d+|N\/A|NO-TICKET)$/i
 const harnessMarker = /<!--\s*harness:\s*(claude|codex)\s*-->/i
-const defaultBotLogins = ["touchless-bot[bot]", "clanker-in-chief"]
+const defaultBotLogins = [appLogin, reviewerLogin]
 
 const sections: Section[] = [
   {
@@ -57,7 +61,7 @@ export const sectionContentOf = (body: string, heading: string) =>
   body.match(new RegExp(`^${heading}[ \\t]*$\\s*(?:<!--.*?-->\\s*)*([\\s\\S]*?)(?=^## |^### |\\s*$)`, "m"))?.[1]?.trim()
 
 /** every title and description problem, or why the pr is exempt (dependabot, merge queue, reverts) */
-export const lintPullRequest = ({ title, body, branch }: PullRequestText): LintResult => {
+export const lintPullRequest = ({ title, body, branch, bot = true }: PullRequestText): LintResult => {
   if (branch.startsWith("dependabot/")) return { skipped: "dependabot branch", errors: [] }
   if (branch.startsWith("gh-readonly-queue/")) return { skipped: "merge queue", errors: [] }
   if (branch.startsWith("revert") && body.includes("Reverts") && body.includes("#")) return { skipped: "revert", errors: [] }
@@ -65,6 +69,7 @@ export const lintPullRequest = ({ title, body, branch }: PullRequestText): LintR
   const titleErrors = [
     semanticTitle.test(title) ? undefined : { title: "PR Title Validation Error", message: "**PR Title Error**: PR title does not follow the semantic messaging format (e.g., \"feat: add new feature\")." },
     ticketSuffix.test(title) ? undefined : { title: "PR Title Validation Error", message: "**PR Title Error**: PR title must end with \"| EXO-XXXX\", where \"XXXX\" is the ticket number. Example: \"feat: add new feature | EXO-1234\". If there is no ticket, use \"NO-TICKET\"." },
+    ...(bot ? skipTokensOf(title) : []).map((token) => ({ title: "PR Title Validation Error", message: `**PR Title Error**: a bot PR can't skip checks: remove \`${token}\` from the title. Only a person may skip exo's checks.` })),
   ].filter((error) => error !== undefined)
   if (titleErrors.length) return { errors: titleErrors }
 
@@ -96,7 +101,9 @@ if (import.meta.main) {
     console.log(`pr-lint: not a bot pull request (author ${pull.user?.login}); set the org variable PR_LINT_SCOPE=all to lint every PR`)
     process.exit(0)
   }
-  const result = lintPullRequest({ title: pull.title ?? "", body, branch: pull.head?.ref ?? "" })
+  // without a scope, isLintInScope says whether the bot opened or drove the pr (PR_LINT_SCOPE=all lints people's prs too)
+  const bot = isLintInScope({ author: pull.user?.login, body, botLogins })
+  const result = lintPullRequest({ title: pull.title ?? "", body, branch: pull.head?.ref ?? "", bot })
   if (result.skipped) {
     console.log(`pr-lint: skipped (${result.skipped})`)
     process.exit(0)

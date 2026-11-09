@@ -8,7 +8,8 @@
  * gets a reply and is resolved, a changed one gets a reply, and nothing is posted twice.
  * then it submits one review as clanker-in-chief: request changes on a block, a comment when it couldn't review, and on
  * a pass a comment, or an approval only when the relay dispatched the run for a beta-enabled pr (SECOND_LOOK_BETA_ENABLED,
- * reviewEventOf.ts), with the new findings that sit on the diff as inline comments. then one sticky pr comment, and it
+ * reviewEventOf.ts), with the new findings that sit on the diff as inline comments. a pass also dismisses its own earlier
+ * change requests on the pr (dismissOwnChangeRequests.ts), since a comment review never lifts one. then one sticky pr comment, and it
  * closes the pr's check with the outcome: outside the beta scope informational (green on a pass, neutral otherwise,
  * never red), on a beta-enabled pr green on a pass and red otherwise. it never runs pr code. exits 1 only when it
  * crashes before closing the check, so the workflow's wrap-up closes it instead.
@@ -34,6 +35,7 @@ import { cliCommandOf, defaultModels } from "./cliCommandOf.ts"
 import { commentBodyOf, commentMarker } from "./commentBodyOf.ts"
 import { commentableLinesOf } from "./commentableLinesOf.ts"
 import { directorySnapshot } from "./directorySnapshot.ts"
+import { dismissOwnChangeRequests } from "./dismissOwnChangeRequests.ts"
 import { finalMessageOf } from "./finalMessageOf.ts"
 import { cappedDiffOf, gitDiffOf } from "./gitDiffOf.ts"
 import { earlierSectionOf } from "./earlierSectionOf.ts"
@@ -46,6 +48,7 @@ import { headlineOf } from "./headlineOf.ts"
 import { postReview } from "./postReview.ts"
 import { postStickyComment } from "./postStickyComment.ts"
 import { requestReviewer } from "./requestReviewer.ts"
+import { appLogin, posterLogin } from "./reviewerLogins.ts"
 import { reviewBodyOf } from "./reviewBodyOf.ts"
 import { reviewEventOf } from "./reviewEventOf.ts"
 import { routeFindingsOf } from "./routeFindingsOf.ts"
@@ -68,8 +71,6 @@ import { verdictOf } from "./verdictOf.ts"
 
 const maxPromptDiffChars = 120_000
 const families: Family[] = ["openai", "anthropic"]
-const posterLogin = "clanker-in-chief"
-const appLogin = "touchless-bot[bot]"
 
 const keyOf = (family: Family) => process.env[`SECOND_LOOK_${family.toUpperCase()}_API_KEY`] ?? ""
 const modelOf = (family: Family) => process.env[`SECOND_LOOK_${family.toUpperCase()}_MODEL`] || defaultModels[family]
@@ -168,6 +169,12 @@ const main = async () => {
   if (posted !== null && event !== "COMMENT" && posted?.event !== event) warn(`GitHub wouldn't let @${author} ${event === "REQUEST_CHANGES" ? "request changes" : "approve"} on this PR (its own?), so the review only comments`)
   const reviewUrl = posted?.url || undefined
   if (reviewUrl) console.log(`second look review (${posted?.event}): ${reviewUrl}`)
+  // a pass that only comments never replaces this reviewer's earlier change request, which would still block the merge
+  if (posted !== null && verdict?.verdict === "pass") {
+    await dismissOwnChangeRequests({ tokens: [appToken, postToken], repository, number: pull.number, login: author, headSha: pull.head.sha })
+      .then((ids) => ids.length && console.log(`lifted the earlier change request: ${ids.join(", ")}`))
+      .catch((failure: Error) => warn(failure.message))
+  }
   const onDiff = new Set(reviewUrl ? fresh.map(({ finding }) => finding) : [])
   const replied = followUps.some(({ status }) => status !== "open") || onThread.length > 0
   if (wasRequested && (reviewUrl || replied)) await requestReviewer({ token: appToken, repository, number: pull.number, login: author }).catch((failure: Error) => warn(failure.message))

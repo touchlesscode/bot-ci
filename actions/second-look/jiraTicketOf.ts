@@ -1,3 +1,4 @@
+import { acceptanceOf } from "../../scripts/jira-rules/acceptanceOf.ts"
 import { textOfHtml } from "./textOfHtml.ts"
 
 type Named = { name?: string } | null | undefined
@@ -14,12 +15,14 @@ export type JiraIssue = {
     labels?: string[]
     parent?: LinkedIssue
     issuelinks?: { type?: { inward?: string; outward?: string }; inwardIssue?: LinkedIssue; outwardIssue?: LinkedIssue }[]
+    /** adf (api v3) */
+    description?: unknown
   }
   renderedFields?: { description?: string | null; comment?: { comments?: { author?: { displayName?: string }; created?: string; body?: string }[] } }
 }
 
-/** a ticket as the reviewer reads it, plus its raw text for finding figma links */
-export type TicketContext = { key: string; markdown: string; text: string }
+/** a ticket as the reviewer reads it, its acceptance criteria (scripts/jira-rules/acceptanceOf), and its raw text for finding figma links */
+export type TicketContext = { key: string; markdown: string; text: string; acceptance: string[] }
 
 /** GET a jira rest path as the bot's jira user; throws on a non-2xx */
 export type JiraGet = (path: string) => Promise<unknown>
@@ -54,5 +57,6 @@ export const jiraTicketOf = async ({ get, key }: { get: JiraGet; key: string }):
   const issue = (await get(`/rest/api/3/issue/${encodeURIComponent(key)}?fields=${fields}&expand=renderedFields`)) as JiraIssue
   const parent = issue.fields.parent ? ((await get(`/rest/api/3/issue/${encodeURIComponent(issue.fields.parent.key)}?fields=summary,status,issuetype,description&expand=renderedFields`).catch(() => undefined)) as JiraIssue | undefined) : undefined
   const raw = [issue.renderedFields?.description ?? "", ...(issue.renderedFields?.comment?.comments ?? []).map((comment) => comment.body ?? ""), parent?.renderedFields?.description ?? ""].join("\n")
-  return { key, markdown: ticketMarkdownOf(issue, parent), text: raw }
+  const acceptance = acceptanceOf(issue.fields.description ?? textOfHtml(issue.renderedFields?.description))
+  return { key, markdown: ticketMarkdownOf(issue, parent), text: raw, acceptance }
 }
