@@ -25,12 +25,13 @@ export const checkStartOf = ({ headSha, detailsUrl, requestedBy, betaEnabled = f
 /**
  * the body that closes the check with the review's outcome. outside the beta scope the check is informational: a pass
  * is green ("no changes requested", never an approval) and anything else neutral, never red. on a beta-enabled pr it
- * enforces: a pass is an approval, and a block (the review requests changes either way) or a failed review is red
+ * enforces: a pass is an approval and a block (the review requests changes either way) is red. a review that
+ * couldn't finish is neutral in both, like an abandoned run: it judged nothing, and red would read as changes requested
  */
 export const checkEndOf = ({ verdict, error, betaEnabled, commentUrl }: { verdict?: Verdict; error?: string; betaEnabled: boolean; commentUrl?: string }) => {
   const link = commentUrl ? `\n\n[The review](${commentUrl})` : ""
   const notPassing = betaEnabled ? "failure" : "neutral"
-  if (error || !verdict) return { status: "completed", conclusion: notPassing, output: { title: "Couldn't review", summary: `${error ?? "no verdict"}${link}` } }
+  if (error || !verdict) return { status: "completed", conclusion: "neutral", output: { title: "Couldn't review", summary: `${error ?? "no verdict"}${link}` } }
   if (verdict.verdict === "pass") return { status: "completed", conclusion: "success", output: { title: betaEnabled ? "Approved" : "No changes requested", summary: `${verdict.summary}${link}` } }
   return { status: "completed", conclusion: notPassing, output: { title: "Changes requested", summary: `${verdict.summary}${link}` } }
 }

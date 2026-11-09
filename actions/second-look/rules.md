@@ -1,6 +1,7 @@
 # Architecture rules (template)
+<!-- owner: repo-review-rules -->
 
-Copy to `.github/second-look/rules.md` and replace with the repo's real rules. Keep it short; Second Look's main reviewer reads all of it on every run, alongside the repo's docs. The org's testing rules (`testingRules.md`: acceptance criteria have tests, new code paths are tested, no skipped tests, e2e for user-facing changes) are added after these on every repo, so don't copy them here.
+Copy to `.github/second-look/rules.md` and replace with the repo's real rules. Keep it short; Second Look's main reviewer reads all of it on every run, alongside the repo's docs. The org's testing rules (`testingRules.md`, the Definition of Done) are added after these on every repo, so don't copy them here.
 
 - Data access goes through the data layer (core-db / GraphQL); no raw SQL in app code.
 - Auth and secrets never appear in client bundles, logs or test fixtures.

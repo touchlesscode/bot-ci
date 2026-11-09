@@ -1,19 +1,20 @@
 # bot-ci
 
+<!-- owner: bot-ci-checks -->
 The CI and guardrails for bot-built code in touchlesscode. Org rulesets make it apply to every repo's default branch without anyone adding files to the repo, and everything runs on Ubicloud runners.
 
 | check | runs on | what it does |
 |-------|---------|--------------|
-| **PR Lint** | every PR; only checks the bot's PRs unless `PR_LINT_SCOPE=all` | exo's PR title and description rules |
+| **PR Lint** | every PR; only checks the bot's PRs unless `PR_LINT_SCOPE=all` | exo's PR title and description rules, and no exo skip tokens in a bot PR's title |
 | **AI Provenance** | every PR; human-made PRs pass at once | PRs made by a coding agent must come through the touchless-bot MCP (`open_pr` / `update_pr`) |
 | **Build** | repos with no PR CI of their own | install, lint, typecheck, test, coverage, build; bundles Worker previews |
-| **Previews** | after Build, when it bundled any | deploys staging previews to `<app>-<branch>-pr.touchlessapis.com` |
+| **Previews** | after Build, when it bundled any | deploys staging previews to `<app>-<version>.touchlessapis.com` ("Previews" below) |
 | **E2E** | after Previews, when the repo has `test:e2e` | the repo's Playwright tests against each preview it deployed |
-| **Second Look (beta)** | only when someone asks | AI testers plus a context-aware reviewer; see [second-look](https://github.com/touchlesscode/second-look) |
+| **Second Look (beta)** | when someone asks, and on every push in its beta scope | AI testers plus a context-aware reviewer. Never a required check; in the beta scope its approval gates AI Provenance and the bot's Slack *Approve*. See [second-look](https://github.com/touchlesscode/second-look) |
 
 A second ruleset, `review-required`, needs one human approval given after the last push, and blocks force-pushes and deleting the default branch. The Touchless Bot App has no bypass, so it can open PRs but never merge one alone.
 
-In practice Build and Previews only run in repos with no CI of their own, which today means the bot's `touchlesscode/apps` monorepo and repos made from `app-template`. exo and anything else with a `pull_request` workflow are left out of the `bot-ci-build` ruleset, so they never see them.
+**What's required where.** The `bot-ci` ruleset requires PR Lint and AI Provenance on every repo. The `bot-ci-build` ruleset requires `ci.yml` (Plan, Build, Previews, E2E) only in repos with no CI of their own, which today means the bot's `touchlesscode/apps` monorepo and repos made from `app-template`. exo, exo-foundation, core-db and anything else with a `pull_request` workflow are left out of it, so they never see Build, Previews, E2E or the coverage gate: their own CI (exo's `cicd`) is what tests them, and bot-ci doesn't make it required. An org owner chooses each ruleset's enforcement: in evaluate mode the checks run and report but block no merge.
 
 ## PR Lint
 
@@ -31,6 +32,8 @@ EXO-1234            (or a browse link, N/A, NO-TICKET)
 ### Test Plan
 How a reviewer can check it by hand.
 ```
+
+A bot PR's title can't carry exo's skip tokens, `[skip-checks]` or `[skip e2e]` (any case): they'd skip exo's quality checks or e2e. People's PRs may, and the draft `[e2e]` opt-in is fine.
 
 Dependabot, merge-queue and revert PRs are skipped. **Editing the title or body doesn't re-run it**, because rulesets ignore the `edited` event: push a commit, or close and reopen the PR.
 
@@ -55,6 +58,7 @@ Before that, Plan reads which template the repo was made from. If it names a dif
 - Node comes from `.nvmrc`, `.node-version` or `engines.node`, else 24.
 
 ### Coverage
+<!-- owner: coverage-gate -->
 
 After the checks, the coverage gate (`actions/coverage/coverageGate.ts`) reads every `coverage/lcov.info` the tests wrote (`app-template` runs vitest with the `lcov` reporter). It reads the reports itself, so lowering the thresholds in a vitest config doesn't get a PR past it.
 
@@ -86,6 +90,7 @@ The install step gets the org secret `PACKAGES_READ_TOKEN` (a classic PAT with o
 - Yarn and bun installs don't get the token (their installs run repo code), so they only see packages that list the repo under the package's Actions access.
 
 ## Previews
+<!-- owner: preview-urls -->
 
 An affected app gets a preview when its `wrangler.jsonc` has an `env.feature` section, exactly as exo does it. `app-template` ships this layout:
 
@@ -98,7 +103,7 @@ An affected app gets a preview when its `wrangler.jsonc` has an `env.feature` se
 }
 ```
 
-- `VERSION` is exo's `getVersionFromBranch`: the last 20 characters of `<branch>-pr`, lowercased, with `.`, `/` and `_` turned into `-`.
+- The host is `<app>-<version>.touchlessapis.com`. `<version>` is exo's `getVersionFromBranch`: `<branch>-pr`, lowercased, every character outside `a-z0-9-` turned into `-`, its last 20 characters, leading dashes dropped (`feat/EXO-1300_csv` → `feat-exo-1300-csv-pr`); a Dependabot branch keeps only its last segment, and `main` is `latest` (`actions/ci/deployPreviews.ts` `versionOf`).
 - Secrets listed in the app's `package.json` under `config.exo.secrets` are uploaded with the deploy itself, via `wrangler deploy --secrets-file`, so a new Worker whose config declares required secrets deploys on its first run. Their values come from the app's (or the repo's) `secrets/preview.enc.yaml`, a sops + age file that Previews decrypts with the org secret `SOPS_AGE_KEY_PREVIEW` (`app-template/secrets/README.md`), else from the repo's GitHub secrets with the same names. A listed secret that's in neither fails that app's preview.
 - The PR description gets the Preview Deployments table (🟢 deployed, 🔴 failed, ⚪ skipped) between its `deployment-links` markers, and a failed deploy also gets a comment.
 - Dependabot and fork PRs don't deploy. Apps with no `env.feature`, or with a `wrangler.toml`, are listed as skipped.

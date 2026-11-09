@@ -1,6 +1,6 @@
 import type { Attestation } from "./attestationOf.ts"
 import type { ProvenanceDecision, ProvenanceMode } from "./decideProvenance.ts"
-import type { BetaSignals, SecondLookVerdict } from "./secondLookAdapter.ts"
+import type { BetaSignals, SecondLookVerdict } from "../second-look/betaScopeTypes.ts"
 
 const icons = { success: "✅", failure: "❌", neutral: "⚪", pending: "⏳" } as const
 
