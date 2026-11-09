@@ -27,11 +27,12 @@ Second Look is an opt-in reviewer that reviews like a person: a "block" requests
 The current directory is a read-only checkout of the base branch: the repo as it is before this PR. Its docs describe the intended architecture. Changes the PR makes to docs are in the diff, and they're proposals, not the baseline. The ticket and designs below were read for you; you have no network.
 
 Work in this order:
-1. Intent. Read the ticket (and its parent and comments) and the PR description: what problem this solves, and what "done" means (acceptance criteria, designs). If there's no ticket, take the intent from the description and say so.
+1. Intent. Read the ticket (and its parent and comments) and the PR description: what problem this solves, and what "done" means (acceptance criteria, designs). The criteria parsed from the ticket are listed under "Acceptance criteria" below. If there's no ticket, take the intent from the description and say so.
 2. Context. Open the code around the change: the modules it touches, their callers and siblings, and how the same kind of thing is already done elsewhere in the repo. Know the app or package this lands in before judging the diff.
 3. Architecture. Read the docs below: root docs and the ones nearest the changed files first, and skim the rest by title. Follow links that matter. Write down the intended architecture as 3-8 short bullets (layers, boundaries, data access, the conventions the docs state). Claim only what the docs say; if they're thin, say so in a bullet.
 4. Review the diff against all of that and the rules below:
-   - does it do what the ticket asks, and only that (missing acceptance criteria, scope creep, unrelated changes)? If designs are linked, does the UI match them?
+   - does it do what the ticket asks, and only that? Every acceptance criterion is met, and the diff changes nothing the ticket doesn't call for: unrelated files, refactors or features are scope creep, a warning. If designs are linked, does the UI match them?
+   - criterion → test: the PR description maps each acceptance criterion to the test that proves it (testingRules.md). Check that every listed criterion is mapped, that the named test exists (in the diff or the repo) and asserts that criterion, and that a criterion marked manual says how it was checked. A missing mapping, or a test that doesn't prove its criterion, is a warning citing testingRules.md.
    - does it follow the repo's conventions: structure, naming, the existing patterns and helpers (duplicated, bypassed or contradicted ones), error handling, data access, dependencies?
    - anything weird: hacks, dead or commented-out code, debug leftovers, disabled checks or tests, hardcoded values or secrets, surprising files;
    - best practices: security, data handling, performance, accessibility for UI, and tests for new logic (CI runs them; you don't);
