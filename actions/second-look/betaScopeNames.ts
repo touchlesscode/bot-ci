@@ -1,5 +1,5 @@
 /**
- * the names second look's beta scope is built on, shared by the relay (scripts/bot-ci-relay), setup.sh's property
+ * the names second look's beta scope is built on, shared by the relay (factory/gate/src/bot-ci-relay), setup.sh's property
  * definition, and anything gating on second look's verdict (AI Provenance, the Slack Approve button)
  */
 
@@ -22,5 +22,11 @@ export const betaExternalId = "second-look-beta"
 /** the touchless bot github app, the only one whose check runs count */
 export const appSlug = "touchless-bot"
 
+/** the user second look reviews and replies as, the one people @mention or request as a reviewer */
+export const reviewerLogin = "clanker-in-chief"
+
+/** the App's own login, which posts in second look's place when clanker-in-chief's token is missing */
+export const appLogin = "touchless-bot[bot]"
+
 /** the accounts second look reviews as: clanker-in-chief, or the App when its token is missing */
-export const reviewerLogins = ["clanker-in-chief", "touchless-bot[bot]"]
+export const reviewerLogins = [reviewerLogin, appLogin]
