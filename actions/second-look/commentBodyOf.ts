@@ -72,9 +72,10 @@ const reportSectionOf = (report: AgentReport) => {
  * the sticky comment, kept short: the call, the reviewer's summary, each new finding in a line (linking the ones
  * on the diff, in the review at `reviewUrl`) and links to the earlier threads (`followUps`) that are fixed or still
  * open. the ticket fit and testing, each tester's steps and the intended architecture sit collapsed below.
- * `error` replaces the summary when the main reviewer didn't answer. `betaEnabled` is whether a pass is an approval
+ * `error` replaces the summary when the main reviewer didn't answer. `betaEnabled` is whether a pass is an approval.
+ * the risk tier follows the findings and threads, with the tech lead who overrode its gate (`overriddenBy`) when one did
  */
-export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel, harness, headSha, scopeReason, onDiff = new Set(), reviewUrl, followUps = [], betaEnabled = false }: {
+export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel, harness, headSha, scopeReason, onDiff = new Set(), reviewUrl, followUps = [], betaEnabled = false, overriddenBy }: {
   verdict?: Verdict
   error?: string
   reports: AgentReport[]
@@ -87,6 +88,7 @@ export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel
   reviewUrl?: string
   followUps?: ThreadOutcome[]
   betaEnabled?: boolean
+  overriddenBy?: string
 }) => {
   const cost = reports.reduce((total, report) => total + (report.costUsd ?? 0), 0)
   const linked = threadKeysLinkedOf(followUps.map(({ thread }) => thread))
@@ -97,6 +99,7 @@ export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel
     verdict ? linked(verdict.summary) : `The main reviewer didn't answer: ${error ?? "unknown error"}. The testers' reports are below.`,
     ...(verdict?.findings.length ? ["", ...verdict.findings.map(findingLineOf(onDiff, linked, reviewUrl))] : []),
     ...followUpLinesOf(followUps),
+    ...(verdict ? ["", `**Risk tier ${verdict.tier}:** ${linked(verdict.tierReason)}${overriddenBy ? ` · overridden by @${overriddenBy}` : ""}`] : []),
     "",
     ...(verdict ? detailsOf("Ticket and testing", ticketAndTestingOf(verdict, linked)) : []),
     ...reports.flatMap(reportSectionOf),

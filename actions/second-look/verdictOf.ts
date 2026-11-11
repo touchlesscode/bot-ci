@@ -1,10 +1,14 @@
 import { jsonObjectOf } from "./jsonObjectOf.ts"
+import type { RiskTier } from "./riskTiers.ts"
 import type { Finding, ThreadFollowUp, Verdict } from "./types.ts"
 
 const statuses = new Set(["fixed", "open", "update"])
 
 const textOf = (value: unknown, fallback = "") => (typeof value === "string" ? value : fallback)
 const stringsOf = (value: unknown) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [])
+
+/** the reviewer's tier, or 2 when it gave none it could: an unclassified pr is treated as the riskiest */
+const tierOf = (value: unknown): RiskTier => (value === 0 || value === 1 || value === 2 ? value : 2)
 
 /** the main reviewer's final message → a normalized verdict; throws when there's no json object in it */
 export const verdictOf = (text: string): Verdict => {
@@ -25,6 +29,8 @@ export const verdictOf = (text: string): Verdict => {
     verdict: raw.verdict === "block" ? "block" : "pass",
     earlier,
     summary: textOf(raw.summary, "(no summary)"),
+    tier: tierOf(raw.tier),
+    tierReason: tierOf(raw.tier) === raw.tier ? textOf(raw.tierReason) : "the reviewer gave no risk tier, so it's treated as Tier 2",
     intent: stringsOf(raw.intent),
     intendedArchitecture: stringsOf(raw.intendedArchitecture),
     tested: stringsOf(raw.tested),
