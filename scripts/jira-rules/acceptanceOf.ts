@@ -1,6 +1,11 @@
 import { adfTextOf } from "./adfTextOf.ts"
 
-const heading = /^\s*(#+\s*|\*\*)?acceptance criteria\b/i
+/**
+ * "Acceptance criteria", or a lead-in of one to three words joined to it on a line of its own: "Scope / acceptance
+ * criteria", "Scope & acceptance criteria", "Scope and acceptance criteria". prose that mentions acceptance criteria
+ * ("Discuss design and acceptance criteria with PM") isn't a heading
+ */
+const heading = /^\s*(#+\s*|\*\*)?(?:acceptance criteria\b|[a-z]+(?: [a-z]+){0,2}\s*(?:\/|&|\band\b)\s*acceptance criteria\s*(?:\*\*)?\s*:?\s*(?:\*\*)?\s*$)/i
 const gherkin = /^\s*[-*•]?\s*(given|when|then|and)\b/i
 const starts = (word: string) => new RegExp(`^\\s*[-*•]?\\s*${word}\\b`, "i")
 

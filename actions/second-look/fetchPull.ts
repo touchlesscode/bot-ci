@@ -2,7 +2,8 @@
 /**
  * second look, in a dispatched run: fetches the pr it was asked to look at and writes it as a
  * pull_request event (targetOf.ts reads it), so every later step sees the same pr. it refuses
- * repos outside the run's own org, prs that aren't open, and prs that change over 5,000 lines.
+ * repos outside the run's own org, prs that aren't open, and prs that change over 5,000 lines (the last two only
+ * for a review: SECOND_LOOK_ANSWERING=true, answering a question, takes any pr in the org).
  * with SECOND_LOOK_HEAD_SHA (what
  * prepare checked out), a pr that has moved on since is still reviewed at that commit.
  *
@@ -17,10 +18,11 @@ import { dirname } from "node:path"
 import { maxChangedLines, overLimitOf } from "./changedLinesOf.ts"
 import type { PullRequest } from "./types.ts"
 
-/** why second look won't look at this pr; undefined when it will */
-export const refusalOf = ({ repository, owner, pull }: { repository: string; owner: string; pull?: PullRequest }) => {
+/** why second look won't look at this pr; undefined when it will. `answering` a question works on any pr in the org, closed or big */
+export const refusalOf = ({ repository, owner, pull, answering = false }: { repository: string; owner: string; pull?: PullRequest; answering?: boolean }) => {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) return `"${repository}" isn't an owner/name repository`
   if (repository.split("/")[0].toLowerCase() !== owner.toLowerCase()) return `${repository} isn't in ${owner}`
+  if (answering) return undefined
   if (pull && pull.state !== "open") return `${repository}#${pull.number} is ${pull.state ?? "not open"}`
   const over = pull ? overLimitOf(pull) : undefined
   if (pull && over !== undefined) return `${repository}#${pull.number} changes ${over} lines, over the ${maxChangedLines} second look will review`
@@ -40,7 +42,7 @@ const main = async () => {
   const response = await fetch(`${api}/repos/${repository}/pulls/${number}`, { headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN ?? ""}`, accept: "application/vnd.github+json" } })
   if (!response.ok) throw new Error(`reading ${repository}#${number} answered ${response.status}`)
   const fetched = (await response.json()) as PullRequest
-  const refusal = refusalOf({ repository, owner, pull: fetched })
+  const refusal = refusalOf({ repository, owner, pull: fetched, answering: process.env.SECOND_LOOK_ANSWERING === "true" })
   if (refusal) throw new Error(refusal)
   const headSha = process.env.SECOND_LOOK_HEAD_SHA
   if (headSha && headSha !== fetched.head.sha) console.log(`::notice title=Second Look (beta)::${repository}#${number} moved to ${fetched.head.sha.slice(0, 7)} after this run started; reviewing ${headSha.slice(0, 7)}`)
