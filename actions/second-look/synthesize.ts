@@ -65,6 +65,10 @@ import { verdictSchema } from "./schemas.ts"
 import { checkEndOf } from "./checkRunBodyOf.ts"
 import { sendCheckRun } from "./sendCheckRun.ts"
 import { synthesisPromptOf } from "./synthesisPrompt.ts"
+import { labelEventsOf } from "./labelEventsOf.ts"
+import { tierGatedVerdictOf } from "./tierGatedVerdictOf.ts"
+import { tierOverrideOf } from "./tierOverrideOf.ts"
+import { tierRestrictedAuthors } from "./riskTiers.ts"
 import { targetOf } from "./targetOf.ts"
 import type { Family, Verdict } from "./types.ts"
 import { verdictOf } from "./verdictOf.ts"
@@ -147,9 +151,17 @@ const main = async () => {
     context: existsSync(contextPath) ? readFileSync(contextPath, "utf8") : "",
     earlier: earlierSectionOf({ threads, headFiles }),
   })
-  const { verdict, error } = await review({ reviewer, prompt }).catch((failure: Error) => ({ verdict: undefined, error: failure.message }))
+  const { verdict: reviewed, error } = await review({ reviewer, prompt }).catch((failure: Error) => ({ verdict: undefined, error: failure.message }))
   const betaEnabled = betaEnabledOf(process.env.SECOND_LOOK_BETA_ENABLED)
   const warn = (line: string) => console.log(`::warning title=Second Look (beta)::${line}`)
+  // a tier-restricted author's tier 1-2 pr is a block unless a tech lead overrode it; unreadable events mean no override
+  const restricted = tierRestrictedAuthors.some((login) => login.toLowerCase() === (pull.user?.login ?? "").toLowerCase())
+  const overriddenBy = reviewed && reviewed.tier > 0 && restricted ? tierOverrideOf(await labelEventsOf({ token: appToken, repository, number: pull.number }).catch((failure: Error) => {
+    warn(`couldn't read the PR's labels, so no risk-tier override counts: ${failure.message}`)
+    return []
+  })) : undefined
+  const verdict = tierGatedVerdictOf({ verdict: reviewed, author: pull.user?.login, overriddenBy })
+  if (overriddenBy) console.log(`risk tier ${reviewed?.tier} overridden by @${overriddenBy}`)
   const wasRequested = await isRequestedReviewer({ token: appToken, repository, number: pull.number, login: author })
   const { inline } = inlineCommentsOf({ findings: verdict?.findings ?? [], commentable: commentableLinesOf(diff), reviewer })
   const { fresh, onThread } = routeFindingsOf({ inline, threads })
@@ -178,7 +190,7 @@ const main = async () => {
   const onDiff = new Set(reviewUrl ? fresh.map(({ finding }) => finding) : [])
   const replied = followUps.some(({ status }) => status !== "open") || onThread.length > 0
   if (wasRequested && (reviewUrl || replied)) await requestReviewer({ token: appToken, repository, number: pull.number, login: author }).catch((failure: Error) => warn(failure.message))
-  const body = commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, headSha: pull.head.sha, scopeReason: betaEnabled ? "beta scope" : process.env.SECOND_LOOK_REQUESTED_BY ? `requested by @${process.env.SECOND_LOOK_REQUESTED_BY}` : "requested", onDiff, reviewUrl, followUps, betaEnabled })
+  const body = commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, headSha: pull.head.sha, scopeReason: betaEnabled ? "beta scope" : process.env.SECOND_LOOK_REQUESTED_BY ? `requested by @${process.env.SECOND_LOOK_REQUESTED_BY}` : "requested", onDiff, reviewUrl, followUps, betaEnabled, overriddenBy })
   console.log(body)
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${body}\n`)
   const commentUrl = await postStickyComment({ token: postToken, repository, number: pull.number, body, marker: commentMarker, author })

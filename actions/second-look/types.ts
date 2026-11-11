@@ -1,3 +1,5 @@
+import type { RiskTier } from "./riskTiers.ts"
+
 /** the two model families second look runs: one tester each, and the main reviewer is one of them */
 export type Family = "anthropic" | "openai"
 
@@ -62,10 +64,12 @@ export type EarlierThread = {
   replies: { author: string; body: string }[]
 }
 
-/** the main reviewer's answer */
+/** the main reviewer's answer; `tier` is the pr's risk tier by riskTiers.ts's rubric, `tierReason` why */
 export type Verdict = {
   verdict: "pass" | "block"
   summary: string
+  tier: RiskTier
+  tierReason: string
   intent: string[]
   intendedArchitecture: string[]
   tested: string[]
