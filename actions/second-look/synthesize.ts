@@ -5,7 +5,9 @@
  * pr is for and the code around it, reads the repo's docs for the intended
  * architecture, reviews the diff against all that and the rules, folds in both
  * testers' reports, and follows up on its own open threads from earlier runs: a fixed one
- * gets a reply and is resolved, a changed one gets a reply, and nothing is posted twice.
+ * gets a reply and is resolved, a changed one gets a reply, and nothing is posted twice. it also reads the pr's
+ * conversation (conversationDigestOf.ts): what became of each earlier finding, other reviewers' comments and what people
+ * decided, so it doesn't raise again what was fixed, answered or already said.
  * then it submits one review as clanker-in-chief: request changes on a block, a comment when it couldn't review, and on
  * a pass a comment, or an approval only when the relay dispatched the run for a beta-enabled pr (SECOND_LOOK_BETA_ENABLED,
  * reviewEventOf.ts), with the new findings that sit on the diff as inline comments. a pass also dismisses its own earlier
@@ -38,22 +40,28 @@ import { directorySnapshot } from "./directorySnapshot.ts"
 import { dismissOwnChangeRequests } from "./dismissOwnChangeRequests.ts"
 import { finalMessageOf } from "./finalMessageOf.ts"
 import { cappedDiffOf, gitDiffOf } from "./gitDiffOf.ts"
+import { answeredThreadsOf } from "./answeredThreadsOf.ts"
+import { conversationDigestOf } from "./conversationDigestOf.ts"
+import { conversationOf } from "./conversationOf.ts"
 import { earlierSectionOf } from "./earlierSectionOf.ts"
-import { earlierThreadsOf } from "./earlierThreadsOf.ts"
-import { followUpThreads } from "./followUpThreads.ts"
+import { followUpThreads, stillOpenOf } from "./followUpThreads.ts"
+import { ledgerOf, nextLedgerOf } from "./ledgerOf.ts"
+import { lineFingerprintOf } from "./lineFingerprint.ts"
+import { openThreadsOf } from "./openThreadsOf.ts"
+import { settledSpotsOf } from "./settledSpotsOf.ts"
+import { stickyCommentOf } from "./stickyCommentOf.ts"
 import { harnessOf } from "./harnessOf.ts"
 import { inlineCommentsOf } from "./inlineCommentsOf.ts"
-import { isRequestedReviewer } from "./isRequestedReviewer.ts"
 import { headlineOf } from "./headlineOf.ts"
 import { postReview } from "./postReview.ts"
 import { postStickyComment } from "./postStickyComment.ts"
-import { requestReviewer } from "./requestReviewer.ts"
 import { appLogin, posterLogin } from "./reviewerLogins.ts"
+import { retriedOnceOf } from "./retriedOnceOf.ts"
 import { reviewBodyOf } from "./reviewBodyOf.ts"
 import { reviewEventOf } from "./reviewEventOf.ts"
 import { routeFindingsOf } from "./routeFindingsOf.ts"
 import { threadKeysLinkedOf } from "./threadKeysLinkedOf.ts"
-import type { EarlierThread } from "./types.ts"
+import type { EarlierThread, PullConversation } from "./types.ts"
 import { writeHeadFiles } from "./writeHeadFiles.ts"
 import { prepareAuth } from "./prepareAuth.ts"
 import { storedReportOf } from "./reportOf.ts"
@@ -62,7 +70,7 @@ import { repoRulePaths, rulesOf } from "./rulesOf.ts"
 import { withTestingRules } from "./withTestingRules.ts"
 import { runCli } from "./runCli.ts"
 import { verdictSchema } from "./schemas.ts"
-import { checkEndOf } from "./checkRunBodyOf.ts"
+import { checkAbandonedOf, checkEndOf } from "./checkRunBodyOf.ts"
 import { sendCheckRun } from "./sendCheckRun.ts"
 import { synthesisPromptOf } from "./synthesisPrompt.ts"
 import { labelEventsOf } from "./labelEventsOf.ts"
@@ -72,6 +80,7 @@ import { tierRestrictedAuthors } from "./riskTiers.ts"
 import { targetOf } from "./targetOf.ts"
 import type { Family, Verdict } from "./types.ts"
 import { verdictOf } from "./verdictOf.ts"
+import { standingLinesOf, withoutRepeatsOf } from "./withoutRepeatsOf.ts"
 
 const maxPromptDiffChars = 120_000
 const families: Family[] = ["openai", "anthropic"]
@@ -132,11 +141,34 @@ const main = async () => {
   const appToken = process.env.GITHUB_TOKEN || postToken
   const checkToken = process.env.SECOND_LOOK_CHECKS_TOKEN || ""
   const author = process.env.SECOND_LOOK_POST_TOKEN ? posterLogin : appLogin
-  const threads: EarlierThread[] = await earlierThreadsOf({ token: postToken, repository, number: pull.number, author }).catch((failure: Error) => {
-    console.log(`::warning title=Second Look (beta)::couldn't read earlier threads, so none get followed up: ${failure.message}`)
-    return []
+  // what was already said on the pr, read once: the earlier threads to follow up, and what became of every finding,
+  // so one that was fixed, answered or made by someone else isn't raised again
+  // without it the review would repeat every earlier point, so an unreadable conversation fails the run (the check
+  // ends "Didn't finish") after one retry
+  const conversation: PullConversation = await retriedOnceOf(() => conversationOf({ token: postToken, repository, number: pull.number }), (failure) =>
+    console.log(`::warning title=Second Look (beta)::couldn't read the PR's conversation, trying once more: ${failure.message}`))
+    .catch(async (failure: Error) => {
+      const reason = `couldn't read the PR's conversation, so it won't review without knowing what was already said: ${failure.message}`
+      const checkRunId = process.env.SECOND_LOOK_CHECK_RUN_ID
+      const detailsUrl = `${process.env.GITHUB_SERVER_URL || "https://github.com"}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+      if (checkRunId && checkToken) await sendCheckRun({ token: checkToken, repository, id: checkRunId, body: checkAbandonedOf({ result: "failure", reason, detailsUrl }) }).catch(() => undefined)
+      throw new Error(reason)
+    })
+  const open: EarlierThread[] = openThreadsOf({ conversation, author })
+  const threads = [...open, ...answeredThreadsOf({ conversation, author, after: open.length })]
+  // the sticky comment keeps its first date, so it's found by paging every comment, not among the latest 100
+  const sticky = await stickyCommentOf({ token: postToken, repository, number: pull.number, marker: commentMarker, author }).catch((failure: Error) => {
+    console.log(`::warning title=Second Look (beta)::couldn't read the last summary comment, so its summary-only findings aren't in the review: ${failure.message}`)
+    return undefined
   })
-  const headFiles = writeHeadFiles({ head: pull.head.sha, paths: threads.map((thread) => thread.path), directory: join(inputs, "head") })
+  const ledger = ledgerOf(sticky?.body ?? undefined)
+  const ownResolved = conversation.threads.filter((thread) => thread.resolved && thread.comments[0]?.author === author).map((thread) => thread.path)
+  const headFiles = writeHeadFiles({ head: pull.head.sha, paths: [...threads.map((thread) => thread.path), ...ownResolved], directory: join(inputs, "head") })
+  const fingerprintAt = (path: string, line: number) => {
+    const file = headFiles.get(path)
+    return file && existsSync(file) ? lineFingerprintOf(readFileSync(file, "utf8"), line) : undefined
+  }
+  const settled = settledSpotsOf({ conversation, author, fingerprintAt })
   const prompt = synthesisPromptOf({
     repository,
     pull,
@@ -150,6 +182,7 @@ const main = async () => {
     reports,
     context: existsSync(contextPath) ? readFileSync(contextPath, "utf8") : "",
     earlier: earlierSectionOf({ threads, headFiles }),
+    conversation: conversationDigestOf({ conversation, ownLogins: [posterLogin, appLogin], earlier: threads, ledger }),
   })
   const { verdict: reviewed, error } = await review({ reviewer, prompt }).catch((failure: Error) => ({ verdict: undefined, error: failure.message }))
   const betaEnabled = betaEnabledOf(process.env.SECOND_LOOK_BETA_ENABLED)
@@ -160,17 +193,20 @@ const main = async () => {
     warn(`couldn't read the PR's labels, so no risk-tier override counts: ${failure.message}`)
     return []
   })) : undefined
-  const verdict = tierGatedVerdictOf({ verdict: reviewed, author: pull.user?.login, overriddenBy })
+  const reviewedVerdict = tierGatedVerdictOf({ verdict: reviewed, author: pull.user?.login, overriddenBy })
   if (overriddenBy) console.log(`risk tier ${reviewed?.tier} overridden by @${overriddenBy}`)
-  const wasRequested = await isRequestedReviewer({ token: appToken, repository, number: pull.number, login: author })
-  const { inline } = inlineCommentsOf({ findings: verdict?.findings ?? [], commentable: commentableLinesOf(diff), reviewer })
-  const { fresh, onThread } = routeFindingsOf({ inline, threads })
-  const followUps = verdict ? await followUpThreads({ threads, followUps: verdict.earlier, onThread, headSha: pull.head.sha, reviewer, token: postToken, resolveTokens: [postToken, appToken], repository, number: pull.number, warn }) : []
+  const { inline } = inlineCommentsOf({ findings: reviewedVerdict?.findings ?? [], commentable: commentableLinesOf(diff), reviewer })
+  const { fresh, onThread, dropped } = routeFindingsOf({ inline, threads, settled })
+  for (const { spot, finding } of dropped) console.log(`dropped a repeat on ${spot.path}:${spot.line}, already answered in ${spot.url}: ${finding.note.slice(0, 120)}`)
+  // a repeat on a spot that already had its one reply isn't posted again, but a blocking one still stands and keeps the block
+  const { verdict, standing, downgraded } = withoutRepeatsOf({ verdict: reviewedVerdict, dropped, threads })
+  if (downgraded) console.log("::notice title=Second Look (beta)::no changes requested: what blocked was only nits already answered in their threads")
+  const followUps = verdict ? await followUpThreads({ threads, followUps: verdict.earlier, onThread, headSha: pull.head.sha, reviewer, token: postToken, resolveTokens: [postToken, appToken], repository, number: pull.number, warn, fingerprintOf: (thread) => (thread.line === null ? undefined : fingerprintAt(thread.path, thread.line)) }) : []
   const event = reviewEventOf({ verdict, betaEnabled })
-  const headline = headlineOf({ verdict, open: followUps.filter(({ status }) => status !== "fixed").length, betaEnabled })
+  const headline = headlineOf({ verdict, open: stillOpenOf(followUps).length + standing.length, betaEnabled })
   const reviewBody = reviewBodyOf({
     headline,
-    summary: verdict ? threadKeysLinkedOf(threads)(verdict.summary) : error ? `Couldn't review: ${error}` : undefined,
+    summary: verdict ? [threadKeysLinkedOf(threads)(verdict.summary), ...(standing.length ? ["", ...standingLinesOf(standing)] : [])].join("\n") : error ? `Couldn't review: ${error}` : undefined,
     reviewer,
   })
   const posted = await postReview({ token: postToken, repository, number: pull.number, commitId: pull.head.sha, event, comments: fresh.map(({ comment }) => comment), body: reviewBody })
@@ -188,12 +224,14 @@ const main = async () => {
       .catch((failure: Error) => warn(failure.message))
   }
   const onDiff = new Set(reviewUrl ? fresh.map(({ finding }) => finding) : [])
-  const replied = followUps.some(({ status }) => status !== "open") || onThread.length > 0
-  if (wasRequested && (reviewUrl || replied)) await requestReviewer({ token: appToken, repository, number: pull.number, login: author }).catch((failure: Error) => warn(failure.message))
-  const body = commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, headSha: pull.head.sha, scopeReason: betaEnabled ? "beta scope" : process.env.SECOND_LOOK_REQUESTED_BY ? `requested by @${process.env.SECOND_LOOK_REQUESTED_BY}` : "requested", onDiff, reviewUrl, followUps, betaEnabled, overriddenBy })
+  const inThreads = new Set(onThread.map(({ finding }) => finding))
+  const summaryOnly = verdict ? verdict.findings.filter((finding) => !onDiff.has(finding) && !inThreads.has(finding)) : []
+  // built against the comment it replaces, so the ledger always carries on from what's actually there
+  const bodyFor = (existing: string | undefined) => commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, headSha: pull.head.sha, scopeReason: betaEnabled ? "beta scope" : process.env.SECOND_LOOK_REQUESTED_BY ? `requested by @${process.env.SECOND_LOOK_REQUESTED_BY}` : "requested", onDiff, reviewUrl, followUps, betaEnabled, overriddenBy, standing, ledger: nextLedgerOf({ earlier: ledgerOf(existing), findings: summaryOnly, sha: pull.head.sha }) })
+  const body = bodyFor(sticky?.body ?? undefined)
   console.log(body)
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${body}\n`)
-  const commentUrl = await postStickyComment({ token: postToken, repository, number: pull.number, body, marker: commentMarker, author })
+  const commentUrl = await postStickyComment({ token: postToken, repository, number: pull.number, body: bodyFor, marker: commentMarker, author })
     .then((url) => {
       console.log(`second look comment: ${url}`)
       return url

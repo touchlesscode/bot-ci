@@ -5,7 +5,7 @@ inputs:
     description: "prepare, synthesize, abandon or answer"
     required: true
   github-token:
-    description: "a Touchless Bot App token for the PR's repo only. prepare: contents + pull-requests read; synthesize: contents read, issues + pull-requests write (posting falls back to it when post-token is blank, and it re-requests clanker-in-chief after the inline review); abandon: issues + pull-requests write, for the didn't-finish comment review when post-token is blank"
+    description: "a Touchless Bot App token for the PR's repo only. prepare: contents + pull-requests read; synthesize: contents read, issues + pull-requests write (posting falls back to it when post-token is blank, and it dismisses second look's own earlier change requests after a pass; it never requests a reviewer); abandon: issues + pull-requests write, for the didn't-finish comment review when post-token is blank"
     required: false
   checks-token:
     description: "a Touchless Bot App token with checks write on the PR's repo, minted on its own so a missing Checks permission only means no check. blank: no check"
@@ -46,6 +46,24 @@ inputs:
   preview-wait-minutes:
     description: "prepare: how long to wait for the head commit's preview deploys (default 10)"
     required: false
+  dash-signin:
+    description: "prepare: `on` signs the testers in to an exo Dash preview as bot@touchless.io on beta-enabled runs (dashSignIn.ts); anything else leaves them logged out"
+    required: false
+  dash-client-id:
+    description: "prepare: Second Look's read-only Auth0 client for core-api"
+    required: false
+  dash-client-secret:
+    description: "prepare: that client's secret; used only in this step, never passed on"
+    required: false
+  dash-auth-url:
+    description: "prepare: the Auth0 tenant (default https://auth.touchless.io)"
+    required: false
+  dash-audience:
+    description: "prepare: the API the token is for (default https://core-api.touchless.io)"
+    required: false
+  signin-transport-key:
+    description: "prepare: 32 random bytes, base64, that seal the Dash session into the dash-session output; the testers get the same key to open it"
+    required: false
   anthropic-api-key:
     required: false
   openai-api-key:
@@ -76,6 +94,9 @@ outputs:
     value: ${{ steps.pull.outputs.head-sha }}
   check-run-id:
     value: ${{ steps.check.outputs.check-run-id }}
+  dash-session:
+    description: "prepare: the Dash preview session, sealed with signin-transport-key; blank when not signed in"
+    value: ${{ steps.dash.outputs.dash-session }}
 runs:
   using: composite
   steps:
@@ -131,6 +152,21 @@ runs:
         SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
         SECOND_LOOK_PREVIEW_WAIT_MINUTES: ${{ inputs.preview-wait-minutes }}
         SECOND_LOOK_PREVIEWS_FILE: ${{ runner.temp }}/second-look-bundle/previews.json
+    # before the bundle is uploaded, so previews.json carries the sign-in note; the session itself only leaves sealed
+    - id: dash
+      if: inputs.step == 'prepare' && inputs.dash-signin == 'on'
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/dashSignIn.ts"
+      env:
+        SECOND_LOOK_DASH_SIGNIN: ${{ inputs.dash-signin }}
+        SECOND_LOOK_BETA_ENABLED: ${{ inputs.beta-enabled }}
+        SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
+        SECOND_LOOK_PREVIEWS_FILE: ${{ runner.temp }}/second-look-bundle/previews.json
+        SECOND_LOOK_DASH_CLIENT_ID: ${{ inputs.dash-client-id }}
+        SECOND_LOOK_DASH_CLIENT_SECRET: ${{ inputs.dash-client-secret }}
+        SECOND_LOOK_DASH_AUTH_URL: ${{ inputs.dash-auth-url }}
+        SECOND_LOOK_DASH_AUDIENCE: ${{ inputs.dash-audience }}
+        SECOND_LOOK_SIGNIN_TRANSPORT_KEY: ${{ inputs.signin-transport-key }}
     - if: inputs.step == 'prepare'
       shell: bash
       working-directory: second-look-source
