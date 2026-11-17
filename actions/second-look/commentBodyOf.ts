@@ -1,10 +1,12 @@
 import { cliNameOf } from "./cliNameOf.ts"
 import { firstSentenceOf } from "./firstSentenceOf.ts"
-import type { ThreadOutcome } from "./followUpThreads.ts"
+import { stillOpenOf, type ThreadOutcome } from "./followUpThreads.ts"
 import { headlineOf } from "./headlineOf.ts"
 import { labelOf } from "./labelOf.ts"
+import { ledgerCommentOf } from "./ledgerOf.ts"
 import { threadKeysLinkedOf } from "./threadKeysLinkedOf.ts"
-import type { AgentReport, Family, Finding, Harness, Verdict } from "./types.ts"
+import type { AgentReport, Family, Finding, Harness, LedgerEntry, Verdict } from "./types.ts"
+import { standingLinesOf, type StandingRepeat } from "./withoutRepeatsOf.ts"
 
 export const commentMarker = "<!-- touchless-second-look -->"
 
@@ -31,13 +33,15 @@ const findingLineOf = (onDiff: ReadonlySet<Finding>, linked: (text: string) => s
 const threadLinkOf = ({ thread, status }: ThreadOutcome) =>
   `[\`${fileNameOf(thread.path)}${!thread.outdated && thread.line ? `:${thread.line}` : ""}\`](${thread.url})${status === "update" ? " (replied)" : ""}`
 
-/** what's fixed since the last look and what's still open: a line each, of links to the threads */
+/** what's fixed since the last look, what's still open, and the answered threads this run replied in: a line each, of links to the threads */
 const followUpLinesOf = (followUps: ThreadOutcome[]) => {
-  const fixed = followUps.filter(({ status }) => status === "fixed")
-  const open = followUps.filter(({ status }) => status !== "fixed")
+  const fixed = followUps.filter(({ thread, status }) => status === "fixed" && !thread.resolvedBy)
+  const open = stillOpenOf(followUps)
+  const answered = followUps.filter(({ thread, status }) => thread.resolvedBy && status === "update")
   return [
     ...(fixed.length ? ["", `**Fixed since the last look:** ${fixed.map(threadLinkOf).join(", ")}`] : []),
     ...(open.length ? ["", `**Still open:** ${open.map(threadLinkOf).join(", ")}`] : []),
+    ...(answered.length ? ["", `**Answered on resolved threads:** ${answered.map(threadLinkOf).join(", ")}`] : []),
   ]
 }
 
@@ -57,11 +61,12 @@ const tallyOf = (report: AgentReport) => {
   return [`${count("pass")} pass`, `${count("fail")} fail`, `${count("couldnt")} couldn't`].join(", ")
 }
 
-/** one tester's collapsed section: summary, the steps table, its concerns */
+/** one tester's collapsed section: summary, its dash sign-in line, the steps table, its concerns */
 const reportSectionOf = (report: AgentReport) => {
   const steps = report.replicated.slice(0, maxSteps)
   return detailsOf(`${familyName[report.family]} tester · ${report.model} · ${tallyOf(report)}`, [
     `${report.summary}${report.status === "ran" ? ` _(confidence: ${report.confidence})_` : ""}`,
+    ...(report.access ? ["", `_${report.access}_`] : []),
     ...(steps.length ? ["", "| Step | Command | Result | Note |", "| --- | --- | --- | --- |", ...steps.map((step) => `| ${cellOf(step.step, 120)} | \`${cellOf(step.command, 200)}\` | ${resultLabel[step.result]} | ${cellOf(step.note)} |`)] : []),
     ...(report.replicated.length > maxSteps ? [`_…and ${report.replicated.length - maxSteps} more steps_`] : []),
     ...(report.concerns.length ? ["", "Concerns:", ...report.concerns.map((concern) => `- ${locationOf(concern.file, concern.line)}${concern.note}`)] : []),
@@ -73,9 +78,10 @@ const reportSectionOf = (report: AgentReport) => {
  * on the diff, in the review at `reviewUrl`) and links to the earlier threads (`followUps`) that are fixed or still
  * open. the ticket fit and testing, each tester's steps and the intended architecture sit collapsed below.
  * `error` replaces the summary when the main reviewer didn't answer. `betaEnabled` is whether a pass is an approval.
- * the risk tier follows the findings and threads, with the tech lead who overrode its gate (`overriddenBy`) when one did
+ * the risk tier follows the findings and threads, with the tech lead who overrode its gate (`overriddenBy`) when one did.
+ * `ledger` (ledgerOf.ts) rides along hidden, so the next run knows the findings that only this comment carried
  */
-export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel, harness, headSha, scopeReason, onDiff = new Set(), reviewUrl, followUps = [], betaEnabled = false, overriddenBy }: {
+export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel, harness, headSha, scopeReason, onDiff = new Set(), reviewUrl, followUps = [], betaEnabled = false, overriddenBy, ledger = [], standing = [] }: {
   verdict?: Verdict
   error?: string
   reports: AgentReport[]
@@ -89,15 +95,19 @@ export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel
   followUps?: ThreadOutcome[]
   betaEnabled?: boolean
   overriddenBy?: string
+  ledger?: LedgerEntry[]
+  /** re-raised warnings on spots already answered (withoutRepeatsOf.ts): listed once with their thread, never posted again */
+  standing?: StandingRepeat[]
 }) => {
   const cost = reports.reduce((total, report) => total + (report.costUsd ?? 0), 0)
   const linked = threadKeysLinkedOf(followUps.map(({ thread }) => thread))
   const lines = [
     commentMarker,
-    headlineOf({ verdict, open: followUps.filter(({ status }) => status !== "fixed").length, betaEnabled }),
+    headlineOf({ verdict, open: stillOpenOf(followUps).length + standing.length, betaEnabled }),
     "",
     verdict ? linked(verdict.summary) : `The main reviewer didn't answer: ${error ?? "unknown error"}. The testers' reports are below.`,
     ...(verdict?.findings.length ? ["", ...verdict.findings.map(findingLineOf(onDiff, linked, reviewUrl))] : []),
+    ...(standing.length ? ["", ...standingLinesOf(standing)] : []),
     ...followUpLinesOf(followUps),
     ...(verdict ? ["", `**Risk tier ${verdict.tier}:** ${linked(verdict.tierReason)}${overriddenBy ? ` · overridden by @${overriddenBy}` : ""}`] : []),
     "",
@@ -108,5 +118,8 @@ export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel
     `<sub>Reviewed via ${cliNameOf(reviewer)} (${reviewerModel})${harness ? ` · PR by ${cliNameOf(harness)}` : ""} · head ${headSha.slice(0, 7)} · ${scopeReason}${cost ? ` · Anthropic tester cost $${cost.toFixed(2)}` : ""}</sub>`,
   ]
   const body = lines.join("\n").replace(/\n{3,}/g, "\n\n")
-  return body.length > maxChars ? `${body.slice(0, maxChars)}\n\n_…cut to fit a GitHub comment._` : body
+  // the ledger goes last, after the collapsed sections (readers that drop those drop it too), and the cut leaves room for it
+  const hidden = ledger.length ? `\n${ledgerCommentOf(ledger)}` : ""
+  const room = maxChars - hidden.length
+  return `${body.length > room ? `${body.slice(0, room)}\n\n_…cut to fit a GitHub comment._` : body}${hidden}`
 }

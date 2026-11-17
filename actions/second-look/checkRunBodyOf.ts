@@ -36,8 +36,8 @@ export const checkEndOf = ({ verdict, error, betaEnabled, commentUrl }: { verdic
   return { status: "completed", conclusion: notPassing, output: { title: "Changes requested", summary: `${verdict.summary}${link}` } }
 }
 
-/** the body that closes a check whose run didn't get to a review (cancelled by a newer request, or a job failed) */
-export const checkAbandonedOf = ({ result, detailsUrl }: { result: string; detailsUrl: string }) =>
+/** the body that closes a check whose run didn't get to a review (cancelled by a newer request, or a job failed, with the `reason` when the run knows it) */
+export const checkAbandonedOf = ({ result, detailsUrl, reason }: { result: string; detailsUrl: string; reason?: string }) =>
   result === "cancelled"
     ? { status: "completed", conclusion: "cancelled", output: { title: "Cancelled", summary: "A newer request or `@clanker-in-chief stop` cancelled this run." } }
-    : { status: "completed", conclusion: "neutral", output: { title: "Didn't finish", summary: `Second Look's run didn't get to a review (${result}). Comment \`@clanker-in-chief review this\` to try again; the [run](${detailsUrl}) has the details.` } }
+    : { status: "completed", conclusion: "neutral", output: { title: "Didn't finish", summary: `Second Look's run didn't get to a review (${reason ?? result}). Comment \`@clanker-in-chief review this\` to try again; the [run](${detailsUrl}) has the details.` } }

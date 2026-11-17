@@ -36,6 +36,8 @@ export type AgentReport = {
   replicated: ReplicatedStep[]
   concerns: Concern[]
   costUsd?: number
+  /** the harness's line on dash: signed in, as whom, or why not (dashAccessOf.ts); absent when no dash preview is involved */
+  access?: string
 }
 
 /** warning: should change before merge (a block rests on these); nit: small, optional polish */
@@ -62,7 +64,40 @@ export type EarlierThread = {
   outdated: boolean
   finding: string
   replies: { author: string; body: string }[]
+  /** who resolved it, for a resolved thread a person answered (answeredThreadsOf.ts): the reviewer may reply once, never reopen it */
+  resolvedBy?: string
 }
+
+/** one comment in a pr's conversation, as the conversation fetch reads it */
+export type ConversationComment = { author: string; body: string; createdAt: string; databaseId?: number; url?: string }
+
+/** one inline review thread on a pr, resolved or not, by anyone */
+export type ConversationThread = {
+  id: string
+  resolved: boolean
+  resolvedBy: string | null
+  outdated: boolean
+  path: string
+  line: number | null
+  originalLine: number | null
+  comments: ConversationComment[]
+}
+
+/** one submitted review: its state, body and the commit it was on */
+export type ConversationReview = { author: string; state: string; body: string; submittedAt: string; commit: string }
+
+/** everything said on a pr so far: inline threads, reviews, and the general conversation (issue comments) */
+export type PullConversation = { threads: ConversationThread[]; reviews: ConversationReview[]; comments: ConversationComment[] }
+
+/** a finding second look gave only in its summary comment (no line on the diff), kept across runs in that comment */
+export type LedgerEntry = { sha: string; severity: Severity; file: string | null; note: string }
+
+/** what became of one of second look's earlier inline findings */
+export type FindingOutcome =
+  | { kind: "open" }
+  | { kind: "fixed"; sha: string }
+  | { kind: "fixedPerAuthor" | "declined" | "answered"; by: string; words: string; resolvedBy: string | null; repliedAfter: boolean }
+  | { kind: "resolved" | "superseded"; resolvedBy: string | null }
 
 /** the main reviewer's answer; `tier` is the pr's risk tier by riskTiers.ts's rubric, `tierReason` why */
 export type Verdict = {
@@ -84,3 +119,9 @@ export type RepoSnapshot = {
   isDirectory: (path: string) => boolean
   listDirectory: (path: string) => string[]
 }
+
+/**
+ * a line second look already answered a person on (their answer, then its one reply, in a resolved thread): a new
+ * finding there is a repeat, dropped, unless the code around the line `changed` since that reply
+ */
+export type SettledSpot = { path: string; line: number; changed: boolean; url: string }

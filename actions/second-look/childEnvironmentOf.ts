@@ -1,4 +1,4 @@
-const secretShaped = /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i
+const secretShaped = /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|SESSION|COOKIE)/i
 
 /**
  * the environment an agent cli (and so every command it runs) starts with:

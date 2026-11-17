@@ -24,8 +24,8 @@ export type ProbedPreview = PreviewLink & { answered: string }
 /** a canary release, and whether it was published from the pr's head commit */
 export type ListedCanary = CanaryRelease & { fromHead: boolean }
 
-/** what the tester is told about what's deployed or published for this pr: previews, and a canary for packages */
-export type PreviewsFile = { previews: ProbedPreview[]; note: string; canary?: ListedCanary }
+/** what the tester is told about what's deployed or published for this pr: previews, a canary for packages, and dashSignIn.ts's note */
+export type PreviewsFile = { previews: ProbedPreview[]; note: string; canary?: ListedCanary; signIn?: { status: "signed-in" | "skipped" | "failed"; note: string; origin?: string; identity?: string } }
 
 type Get = (path: string) => Promise<unknown>
 
