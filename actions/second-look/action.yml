@@ -188,6 +188,22 @@ runs:
     - if: inputs.step == 'synthesize' || inputs.step == 'answer'
       shell: bash
       run: npm install --global --no-audit --no-fund --loglevel=error @anthropic-ai/claude-code @openai/codex
+    # the codex reviewer's read-only sandbox is bubblewrap, which needs user namespaces. the runner image (ubuntu 24.04)
+    # has no bwrap, so codex used its bundled copy, which apparmor's user-namespace restriction refuses: every command
+    # failed and the review came from the diff alone. give codex the distro's /usr/bin/bwrap (the restriction stays on;
+    # 24.04 ships no apparmor profile for bwrap, so this may still be refused), then log whether the sandbox starts
+    - if: inputs.step == 'synthesize' || inputs.step == 'answer'
+      shell: bash
+      run: |
+        sudo -n apt-get install -y -qq --no-install-recommends bubblewrap >/dev/null 2>&1 \
+          || { sudo -n apt-get update -qq >/dev/null 2>&1 && sudo -n apt-get install -y -qq --no-install-recommends bubblewrap >/dev/null 2>&1; } \
+          || echo "::warning title=Second Look (beta)::couldn't install bubblewrap; codex falls back to its bundled copy"
+        echo "bwrap: $(command -v bwrap || echo 'not on PATH')"
+        if refused="$(codex sandbox -- ls -A . 2>&1 >/dev/null)"; then
+          echo "codex sandbox: starts"
+        else
+          echo "::warning title=Second Look (beta)::codex's read-only sandbox can't start on this runner, so a Codex review can't read the repo: ${refused//$'\n'/ }"
+        fi
     - if: inputs.step == 'synthesize'
       uses: actions/download-artifact@v6
       continue-on-error: true

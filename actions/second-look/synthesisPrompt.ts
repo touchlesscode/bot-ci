@@ -71,6 +71,7 @@ Be terse everywhere. People skim this; every line should earn its place.
 
 Answer with JSON only, in the given schema:
 - summary: 1-2 short sentences: the call and the main reason. Don't recap what the PR does, count findings or list what was tested;
+- readRepo: true when you read files in the checkout; false when every attempt to read one failed and you reviewed from the diff and these inputs alone;
 - tier: 0, 1 or 2, from step 7;
 - tierReason: one short sentence naming what puts it in that tier (for example "changes the edge renderer's route handling");
 - intent: what the ticket and PR set out to do, and whether the change does that and only that, at most 3 short lines;

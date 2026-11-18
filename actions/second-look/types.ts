@@ -103,6 +103,8 @@ export type FindingOutcome =
 export type Verdict = {
   verdict: "pass" | "block"
   summary: string
+  /** false when the reviewer couldn't read the checkout and judged from the diff and its inputs alone */
+  readRepo?: boolean
   tier: RiskTier
   tierReason: string
   intent: string[]
