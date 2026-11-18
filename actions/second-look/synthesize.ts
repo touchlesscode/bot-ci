@@ -34,6 +34,7 @@ import { architectureDocsOf } from "./architectureDocsOf.ts"
 import { betaEnabledOf } from "./betaEnabledOf.ts"
 import { childEnvironmentOf } from "./childEnvironmentOf.ts"
 import { cliCommandOf, defaultModels } from "./cliCommandOf.ts"
+import { cliNameOf } from "./cliNameOf.ts"
 import { commentBodyOf, commentMarker } from "./commentBodyOf.ts"
 import { commentableLinesOf } from "./commentableLinesOf.ts"
 import { directorySnapshot } from "./directorySnapshot.ts"
@@ -208,7 +209,9 @@ const main = async () => {
     headline,
     summary: verdict ? [threadKeysLinkedOf(threads)(verdict.summary), ...(standing.length ? ["", ...standingLinesOf(standing)] : [])].join("\n") : error ? `Couldn't review: ${error}` : undefined,
     reviewer,
+    readRepo: verdict?.readRepo,
   })
+  if (verdict?.readRepo === false) warn(`the ${cliNameOf(reviewer)} reviewer couldn't read the repo, so it reviewed from the diff alone`)
   const posted = await postReview({ token: postToken, repository, number: pull.number, commitId: pull.head.sha, event, comments: fresh.map(({ comment }) => comment), body: reviewBody })
     .catch((failure: Error) => {
       warn(`couldn't post the review, the summary has every finding: ${failure.message}`)
