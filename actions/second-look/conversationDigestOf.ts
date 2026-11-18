@@ -2,6 +2,7 @@ import { conversationNoiseOf } from "./conversationNoiseOf.ts"
 import { conversationTextOf } from "./conversationTextOf.ts"
 import { findingOutcomeOf } from "./findingOutcomeOf.ts"
 import { findingMarker } from "./inlineCommentsOf.ts"
+import { summaryAnswerKeyOf, summaryAnswersOf } from "./summaryAnswerOf.ts"
 import type { ConversationThread, EarlierThread, FindingOutcome, LedgerEntry, PullConversation } from "./types.ts"
 
 /** how many items each section keeps (newest first) and how long each one may run */
@@ -67,8 +68,14 @@ export const conversationDigestOf = ({ conversation, ownLogins, earlier, ledger 
     const { severity, gist } = gistOf(thread.comments[0].body)
     return `- ${whereOf(thread)} ${severity}, raised ${dayOf(thread.comments[0].createdAt)}: ${gist} → ${outcomeTextOf(findingOutcomeOf(thread, thread.comments[0].author), keyOf.get(thread.id))}`
   })
-  const summaryOnly = ledger.slice(0, digestLimits.summaryFindings).map((entry) =>
-    `- ${entry.file ? `\`${entry.file}\` ` : ""}${entry.severity}, summary only at ${entry.sha}: ${conversationTextOf(entry.note, digestLimits.itemChars)} → no thread; any answer is in the conversation below`)
+  // the PR's build answers a summary-only finding in a comment of its own (summaryAnswerBodyOf), a bot's, which the
+  // conversation below leaves out as noise: its answer goes on the finding's own line
+  const answers = summaryAnswersOf(conversation.comments)
+  const summaryOnly = ledger.slice(0, digestLimits.summaryFindings).map((entry) => {
+    const answer = answers.get(summaryAnswerKeyOf(entry))
+    const outcome = answer ? `ANSWERED by @${answer.by}: ${quoted(answer.words)}` : "no thread; any answer is in the conversation below"
+    return `- ${entry.file ? `\`${entry.file}\` ` : ""}${entry.severity}, summary only at ${entry.sha}: ${conversationTextOf(entry.note, digestLimits.itemChars)} → ${outcome}`
+  })
   const otherThreads = newestFirst(others, (thread) => thread.comments[0].createdAt).slice(0, digestLimits.otherThreads).map(otherThreadLineOf)
   const reviews = newestFirst(conversation.reviews.filter((review) => !conversationNoiseOf(review, ownLogins)), (review) => review.submittedAt)
     .slice(0, digestLimits.reviews)

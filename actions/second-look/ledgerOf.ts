@@ -1,11 +1,9 @@
+import { summaryFindingsOf } from "./summaryFindingsOf.ts"
 import type { Finding, LedgerEntry } from "./types.ts"
 
 const ledgerPattern = /<!-- touchless-second-look-ledger:([A-Za-z0-9_-]*) -->/
 const maxEntries = 20
 const maxNoteChars = 300
-
-/** a summary-only finding's bullet in a summary comment written before the ledger existed: no link to a diff line */
-const bulletPattern = /^- \*\*(Warning|Nit):\*\* (?!\[)(?:`([^`\n]+?)(?::\d+)?` )?(.+)$/gm
 
 /**
  * the summary-only findings earlier runs left in second look's summary comment (`body`), newest first: its
@@ -22,13 +20,8 @@ export const ledgerOf = (body: string | undefined): LedgerEntry[] => {
       return []
     }
   }
-  const sha = /· head ([0-9a-f]{7,40})/.exec(body)?.[1] ?? "unknown"
-  return [...body.matchAll(bulletPattern)].map((match) => ({
-    sha,
-    severity: match[1] === "Warning" ? "warning" : "nit",
-    file: match[2] ?? null,
-    note: match[3].replace(/ _\([^)]*\)_$/, "").slice(0, maxNoteChars),
-  }))
+  // a comment from before the ledger: its visible summary-only bullets (summaryFindingsOf)
+  return summaryFindingsOf(body)
 }
 
 /** this run's summary-only `findings` at `sha` ahead of the `earlier` ledger, exact repeats dropped, capped at 20 */
