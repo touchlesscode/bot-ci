@@ -188,16 +188,27 @@ runs:
     - if: inputs.step == 'synthesize' || inputs.step == 'answer'
       shell: bash
       run: npm install --global --no-audit --no-fund --loglevel=error @anthropic-ai/claude-code @openai/codex
-    # the codex reviewer's read-only sandbox is bubblewrap, which needs user namespaces. the runner image (ubuntu 24.04)
-    # has no bwrap, so codex used its bundled copy, which apparmor's user-namespace restriction refuses: every command
-    # failed and the review came from the diff alone. give codex the distro's /usr/bin/bwrap (the restriction stays on;
-    # 24.04 ships no apparmor profile for bwrap, so this may still be refused), then log whether the sandbox starts
+    # the codex reviewer's read-only sandbox is bubblewrap, which needs a user namespace with its own network. the runner
+    # image (ubuntu 24.04) has no bwrap, so codex used its bundled copy, which apparmor's user-namespace restriction
+    # refuses (bwrap: loopback: Failed RTM_NEWADDR): every command failed and the review came from the diff alone. so this
+    # step gives codex the distro's /usr/bin/bwrap and lifts exactly that restriction, kernel.apparmor_restrict_unprivileged_userns=0
+    # (and kernel.unprivileged_userns_clone=1 where that key exists), on this runner vm only. the vm is thrown away after
+    # the job, no apparmor profile is touched, and codex keeps --sandbox read-only with no network. approved by the owner
+    # on 2026-11-19. failures are warnings, then the probe logs whether the sandbox starts
     - if: inputs.step == 'synthesize' || inputs.step == 'answer'
       shell: bash
       run: |
         sudo -n apt-get install -y -qq --no-install-recommends bubblewrap >/dev/null 2>&1 \
           || { sudo -n apt-get update -qq >/dev/null 2>&1 && sudo -n apt-get install -y -qq --no-install-recommends bubblewrap >/dev/null 2>&1; } \
           || echo "::warning title=Second Look (beta)::couldn't install bubblewrap; codex falls back to its bundled copy"
+        for lift in kernel.apparmor_restrict_unprivileged_userns=0 kernel.unprivileged_userns_clone=1; do
+          if sysctl -n "${lift%=*}" >/dev/null 2>&1; then
+            sudo -n sysctl -w "$lift" >/dev/null 2>"$RUNNER_TEMP/sysctl.err" \
+              || echo "::warning title=Second Look (beta)::couldn't set $lift on this runner (apparmor's user-namespace restriction): $(tr '\n' ' ' < "$RUNNER_TEMP/sysctl.err")"
+          else
+            echo "${lift%=*}: not on this runner, nothing to lift"
+          fi
+        done
         echo "bwrap: $(command -v bwrap || echo 'not on PATH')"
         if refused="$(codex sandbox -- ls -A . 2>&1 >/dev/null)"; then
           echo "codex sandbox: starts"
