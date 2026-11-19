@@ -9,7 +9,16 @@ const familyName: Record<Family, string> = { anthropic: "Anthropic", openai: "Op
  * around the change, the repo's architecture docs (read on the base branch, so they're the intended architecture
  * before this pr), then conventions and best practices. the testers' reports are supporting evidence.
  */
-export const synthesisPromptOf = ({ repository, pull, reviewer, harness, diff, truncated, diffPath, docs, rules, reports, context, earlier = "", conversation = "" }: {
+/**
+ * a re-review (reviewPlanOf.ts "incremental"): what the reviewer is told when `diff` is only what changed since the
+ * head it last reviewed, `since`, with the whole pr's diff on disk at `fullDiffPath`
+ */
+export type Rereview = { since: string; sinceTier?: number; fullDiffPath: string }
+
+/** the re-review section: review the new changes, follow up the earlier findings, keep the whole pr's tier */
+export const rereviewSectionOf = ({ since, sinceTier, fullDiffPath }: Rereview) => `This is a re-review. You last reviewed this PR at ${since.slice(0, 7)}${sinceTier === undefined ? "" : ` and put it at risk tier ${sinceTier}`}. The diff below is only what changed since then (\`git diff ${since.slice(0, 7)}..head\`), so review those changes, not the whole PR again: earlier findings are followed up through their threads and the conversation below, and they still count toward the verdict. The whole PR's diff is at ${fullDiffPath}: read it when a new change needs its context, and pin findings to lines of the PR's diff as usual. The tier is still the whole PR's: never lower than ${sinceTier ?? "the earlier one"} unless these changes removed what put it there.`
+
+export const synthesisPromptOf = ({ repository, pull, reviewer, harness, diff, truncated, diffPath, docs, rules, reports, context, earlier = "", conversation = "", rereview }: {
   repository: string
   pull: PullRequest
   reviewer: Family
@@ -23,6 +32,7 @@ export const synthesisPromptOf = ({ repository, pull, reviewer, harness, diff, t
   context: string
   earlier?: string
   conversation?: string
+  rereview?: Rereview
 }) => `You are the main reviewer for Second Look (beta), from the ${familyName[reviewer]} family, reviewing ${repository}#${pull.number}${harness ? ` (written by the ${harness} harness)` : ""}.
 
 Second Look is an opt-in reviewer that reviews like a person: a "block" requests changes, a "pass" means you have no changes to request, and findings become inline comments. A person still approves the PR. Your job is the review a senior engineer who knows this codebase would give: understand what the change is for and where it lands, then make sure it fits.
@@ -98,10 +108,10 @@ ${rules.trim()}
 Tester reports:
 ${reports.map((report) => `### ${familyName[report.family]} (${report.model}, ${report.status})\n${JSON.stringify({ summary: report.summary, access: report.access, confidence: report.confidence, replicated: report.replicated, concerns: report.concerns }, null, 2)}`).join("\n\n")}
 
-PR title: ${pull.title}
+${rereview ? `Re-review:\n${rereviewSectionOf(rereview)}\n\n` : ""}PR title: ${pull.title}
 
 PR description:
 ${pull.body?.trim() || "(empty)"}
 
-Diff${truncated ? ` (truncated; the full diff is at ${diffPath})` : ""}:
+${rereview ? `Changes since ${rereview.since.slice(0, 7)}` : "Diff"}${truncated ? ` (truncated; the full diff is at ${diffPath})` : ""}:
 ${diff}`

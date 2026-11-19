@@ -36,8 +36,36 @@ export type AgentReport = {
   replicated: ReplicatedStep[]
   concerns: Concern[]
   costUsd?: number
+  /** codex's "tokens used" total, when it printed one */
+  tokensUsed?: number
   /** the harness's line on dash: signed in, as whom, or why not (dashAccessOf.ts); absent when no dash preview is involved */
   access?: string
+  /** the provider refused on credit, quota or credentials (providerErrorOf.ts): the tester never tested */
+  providerError?: ProviderError
+}
+
+/** a provider's refusal on money or credentials, as opposed to a crash or a bad answer */
+export type ProviderError = { provider: string; family: Family; kind: "billing" | "auth"; message: string }
+
+/**
+ * what a run does before any model starts (reviewPlanOf.ts), decided in fetchPull.ts and carried in the event file so
+ * the testers, awaitPreviews.ts and the reviewer all follow it
+ * - `skip`: no model review at all, and why (a test sandbox repo, a docs-only pr)
+ * - `review`: the whole pr, or only what changed `since` the last reviewed head (`sinceTier` its tier then)
+ * - `testers`: run them, or skip them with `testersReason`
+ * - `anthropicModel`: the smaller model to use instead of the configured one, with `modelReason` either way
+ */
+export type ReviewPlan = {
+  skip?: string
+  review: "full" | "incremental"
+  since?: string
+  sinceTier?: number
+  fullReason?: string
+  testers: "run" | "skip"
+  testersReason?: string
+  anthropicModel?: string
+  modelReason: string
+  changedLines?: number
 }
 
 /** warning: should change before merge (a block rests on these); nit: small, optional polish */
