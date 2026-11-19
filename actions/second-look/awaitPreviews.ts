@@ -16,6 +16,7 @@ import { setTimeout as sleepFor } from "node:timers/promises"
 import { canaryReleaseOf, type CanaryRelease } from "./canaryReleaseOf.ts"
 import { pendingPreviewChecksOf, type CheckRun } from "./pendingPreviewChecksOf.ts"
 import { previewLinksOf, type PreviewLink } from "./previewLinksOf.ts"
+import { planOf } from "./fetchReviewPlan.ts"
 import { targetOf } from "./targetOf.ts"
 
 /** a preview and what it answered (an http status, or why it didn't) */
@@ -65,6 +66,9 @@ const main = async () => {
     console.log(`previews: ${file.note}; ${file.previews.map((preview) => `${preview.label} ${preview.url} (${preview.answered})`).join(", ") || "none listed"}`)
     if (file.canary) console.log(`canary: ${file.canary.packages.join(" ")}${file.canary.fromHead ? " (from the head commit)" : " (from an earlier commit)"}`)
   }
+  // nothing will test the previews (a skipped run, or a re-review with no runnable change), so don't wait for them
+  const plan = planOf()
+  if (plan.testers === "skip") return write({ previews: [], note: `didn't wait for previews: the testers are skipped (${plan.skip ?? plan.testersReason})` })
   try {
     const { repository, pull } = targetOf()
     const api = process.env.GITHUB_API_URL || "https://api.github.com"

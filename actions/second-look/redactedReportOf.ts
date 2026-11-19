@@ -8,6 +8,7 @@ export const redactedReportOf = (report: AgentReport, secrets: readonly string[]
     ...report,
     summary: clean(report.summary),
     ...(report.access === undefined ? {} : { access: clean(report.access) }),
+    ...(report.providerError === undefined ? {} : { providerError: { ...report.providerError, message: clean(report.providerError.message) } }),
     replicated: report.replicated.map((step) => ({ ...step, step: clean(step.step), command: clean(step.command), note: clean(step.note) })),
     concerns: report.concerns.map((concern) => ({ ...concern, note: clean(concern.note) })),
   }
