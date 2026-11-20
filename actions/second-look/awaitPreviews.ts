@@ -7,7 +7,10 @@
  *
  *   node awaitPreviews.ts
  *
- * env: GITHUB_TOKEN (checks + pull-requests read on the pr's repo), SECOND_LOOK_EVENT_PATH (the pr, see targetOf.ts), optional GITHUB_API_URL,
+ * the check-runs poll is only a courtesy wait: if it fails (a token without checks read answers 403) the pr description is still read,
+ * since that's where the previews are listed.
+ *
+ * env: GITHUB_TOKEN (pull-requests read on the pr's repo), SECOND_LOOK_CHECKS_TOKEN (optional, checks read; used for the poll, else GITHUB_TOKEN), SECOND_LOOK_EVENT_PATH (the pr, see targetOf.ts), optional GITHUB_API_URL,
  * SECOND_LOOK_PREVIEW_WAIT_MINUTES, SECOND_LOOK_PREVIEWS_FILE (default $RUNNER_TEMP/second-look-inputs/previews.json).
  */
 import { mkdirSync, writeFileSync } from "node:fs"
@@ -48,6 +51,17 @@ export const awaitPreviewChecks = async ({ get, repository, sha, waitMs, sleep =
   }
 }
 
+/** the wait, which never stops the lookup: when the check-runs read fails (403 without checks read) say so and carry on to the pr description */
+export const waitForPreviewChecks = async (options: Parameters<typeof awaitPreviewChecks>[0]) => {
+  try {
+    return await awaitPreviewChecks(options)
+  } catch (error) {
+    const reason = (error as Error).message
+    console.log(`previews: couldn't wait for the preview deploys (${reason}); reading the PR description anyway`)
+    return `couldn't tell whether the preview deploys finished (${reason}), so a preview may be from an earlier commit or still deploying`
+  }
+}
+
 /** a GET or the status it answered */
 const probe = async (url: string) => {
   try {
@@ -72,13 +86,15 @@ const main = async () => {
   try {
     const { repository, pull } = targetOf()
     const api = process.env.GITHUB_API_URL || "https://api.github.com"
-    const get: Get = async (path) => {
-      const response = await fetch(`${api}${path}`, { headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN ?? ""}`, accept: "application/vnd.github+json" } })
+    const getWith = (token: string): Get => async (path) => {
+      const response = await fetch(`${api}${path}`, { headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" } })
       if (!response.ok) throw new Error(`GET ${path.split("?")[0]} answered ${response.status}`)
       return response.json()
     }
+    const get = getWith(process.env.GITHUB_TOKEN ?? "")
+    const getChecks = getWith(process.env.SECOND_LOOK_CHECKS_TOKEN || process.env.GITHUB_TOKEN || "")
     const waitMs = (Number(process.env.SECOND_LOOK_PREVIEW_WAIT_MINUTES) || 10) * 60_000
-    const note = await awaitPreviewChecks({ get, repository, sha: pull.head.sha, waitMs })
+    const note = await waitForPreviewChecks({ get: getChecks, repository, sha: pull.head.sha, waitMs })
     const { body } = (await get(`/repos/${repository}/pulls/${pull.number}`)) as { body?: string | null }
     const previews = await Promise.all(previewLinksOf(body).map(async (link) => ({ ...link, answered: await probe(link.url) })))
     const canary = canaryReleaseOf(body)

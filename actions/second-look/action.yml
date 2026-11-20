@@ -149,6 +149,7 @@ runs:
       run: node "$GITHUB_ACTION_PATH/awaitPreviews.ts"
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        SECOND_LOOK_CHECKS_TOKEN: ${{ inputs.checks-token }}
         SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
         SECOND_LOOK_PREVIEW_WAIT_MINUTES: ${{ inputs.preview-wait-minutes }}
         SECOND_LOOK_PREVIEWS_FILE: ${{ runner.temp }}/second-look-bundle/previews.json
