@@ -21,6 +21,7 @@ export const reportSchema = strictObject({
 export const verdictSchema = strictObject({
   verdict: { type: "string", enum: ["pass", "block"] },
   summary: { type: "string" },
+  readRepo: { type: "boolean" },
   tier: { type: "integer", enum: [0, 1, 2] },
   tierReason: { type: "string" },
   intent: strings,
@@ -36,3 +37,5 @@ export const verdictSchema = strictObject({
     items: strictObject({ thread: { type: "string" }, status: { type: "string", enum: ["fixed", "open", "update"] }, note: { type: "string" } }),
   },
 })
+
+export const answerSchema = strictObject({ answer: { type: "string" } })

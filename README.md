@@ -10,7 +10,7 @@ The CI and guardrails for bot-built code in touchlesscode. Org rulesets make it 
 | **Build** | repos with no PR CI of their own | install, lint, typecheck, test, coverage, build; bundles Worker previews |
 | **Previews** | after Build, when it bundled any | deploys staging previews to `<app>-<version>.touchlessapis.com` ("Previews" below) |
 | **E2E** | after Previews, when the repo has `test:e2e` | the repo's Playwright tests against each preview it deployed |
-| **Second Look (beta)** | when someone asks, and on every push in its beta scope | AI testers plus a context-aware reviewer. Never a required check; in the beta scope its approval gates AI Provenance and the bot's Slack *Approve*. See [second-look](https://github.com/touchlesscode/second-look) |
+| **Second Look (beta)** | when someone asks, and once on its own for a PR in its beta scope (never on a push) | AI testers plus a context-aware reviewer. Never a required check; in the beta scope its approval gates AI Provenance and the bot's Slack *Approve*. See [second-look](https://github.com/touchlesscode/second-look) |
 
 A second ruleset, `review-required`, needs one human approval given after the last push, and blocks force-pushes and deleting the default branch. The Touchless Bot App has no bypass, so it can open PRs but never merge one alone.
 

