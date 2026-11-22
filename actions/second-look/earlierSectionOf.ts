@@ -9,13 +9,14 @@ const whereOf = (thread: EarlierThread) =>
     : `${thread.path}:${thread.line}`
 
 /**
- * the prompt's list of second look's open threads on this pr: each one's spot, the finding, the replies
- * under it, and where the reviewer can read that file as it is at the head (`headFiles`)
+ * the prompt's list of second look's open threads on this pr, then the resolved ones a person answered: each
+ * one's spot, the finding, the replies under it, and where the reviewer can read that file as it is at the head (`headFiles`)
  */
 export const earlierSectionOf = ({ threads, headFiles }: { threads: EarlierThread[]; headFiles: ReadonlyMap<string, string | undefined> }) =>
   threads.length
     ? threads.map((thread) => [
-      `### ${thread.key} · ${whereOf(thread)}`,
+      `### ${thread.key} · ${whereOf(thread)}${thread.resolvedBy ? ` · resolved by @${thread.resolvedBy} after a reply` : ""}`,
+      ...(thread.resolvedBy ? ["Resolved after a person answered: \"open\" (nothing posted) when their answer settles it; \"update\" only to answer their reason once, with what they missed or what changed; never \"fixed\"."] : []),
       `File at the head: ${headFiles.get(thread.path) ?? "(not in the head: deleted or moved)"}`,
       "",
       thread.finding,

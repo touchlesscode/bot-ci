@@ -29,6 +29,7 @@ export const verdictOf = (text: string): Verdict => {
     verdict: raw.verdict === "block" ? "block" : "pass",
     earlier,
     summary: textOf(raw.summary, "(no summary)"),
+    readRepo: raw.readRepo !== false,
     tier: tierOf(raw.tier),
     tierReason: tierOf(raw.tier) === raw.tier ? textOf(raw.tierReason) : "the reviewer gave no risk tier, so it's treated as Tier 2",
     intent: stringsOf(raw.intent),

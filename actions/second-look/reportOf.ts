@@ -1,4 +1,5 @@
 import { jsonObjectOf } from "./jsonObjectOf.ts"
+import { redactedReportOf } from "./redactedReportOf.ts"
 import type { AgentReport, Concern, Family, ReplicatedStep } from "./types.ts"
 
 const textOf = (value: unknown, fallback = "") => (typeof value === "string" ? value : fallback)
@@ -38,7 +39,7 @@ export const storedReportOf = (family: Family, text: string | undefined): AgentR
   if (!text) return skippedReportOf(family, "unknown", `the ${family} tester didn't report (its job was skipped, cancelled or failed before writing)`)
   try {
     const stored = JSON.parse(text) as AgentReport
-    return stored && stored.family === family ? stored : skippedReportOf(family, "unknown", `the ${family} report is for another family`)
+    return stored && stored.family === family ? redactedReportOf(stored) : skippedReportOf(family, "unknown", `the ${family} report is for another family`)
   } catch {
     return skippedReportOf(family, "unknown", `the ${family} report file isn't json`)
   }

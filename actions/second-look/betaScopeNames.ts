@@ -1,5 +1,5 @@
 /**
- * the names second look's beta scope is built on, shared by the relay (scripts/bot-ci-relay), setup.sh's property
+ * the names second look's beta scope is built on, shared by the relay (factory/gate/src/bot-ci-relay), setup.sh's property
  * definition, and anything gating on second look's verdict (AI Provenance, the Slack Approve button)
  */
 

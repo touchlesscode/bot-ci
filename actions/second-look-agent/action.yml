@@ -14,6 +14,12 @@ inputs:
   codex-sandbox:
     description: "openai: blank (workspace-write) or danger-full-access when codex's linux sandbox can't start on the runner"
     required: false
+  dash-session:
+    description: "prepare's sealed Dash preview session (blank: not signed in); the harness opens it before the agent starts"
+    required: false
+  signin-transport-key:
+    description: "the key that opens dash-session; kept out of the agent's environment"
+    required: false
   packages-token:
     description: "a GITHUB_TOKEN with packages: read, for @touchlesscode packages on GitHub Packages (only packages that grant the running repo access)"
     required: false
@@ -52,6 +58,8 @@ runs:
         SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
         SECOND_LOOK_DIFF_DIRECTORY: ${{ runner.temp }}/second-look-bundle
         SECOND_LOOK_PREVIEWS_FILE: ${{ runner.temp }}/second-look-bundle/previews.json
+        SECOND_LOOK_DASH_SESSION: ${{ inputs.dash-session }}
+        SECOND_LOOK_SIGNIN_TRANSPORT_KEY: ${{ inputs.signin-transport-key }}
     - if: always()
       uses: actions/upload-artifact@v5
       with:

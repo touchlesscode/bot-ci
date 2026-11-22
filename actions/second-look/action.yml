@@ -1,17 +1,17 @@
 name: Second Look (beta)
-description: "Second Look's steps outside the testers, in the private second-look repo's dispatched run. prepare: fetch the PR, open its check, wait for its previews and bundle its files and diff for the testers (never runs PR code). synthesize: the main reviewer, a read-only agent on the base branch that reads the PR's Jira ticket and linked designs, the code around the change and the repo's docs, reviews the diff, folds in both testers' reports, leaves its findings as inline comments on the diff, posts one sticky summary comment and closes the check. abandon: closes the check and tells the PR when the run ended without a review."
+description: "Second Look's steps outside the testers, in the private second-look repo's dispatched run. prepare: fetch the PR, open its check, wait for its previews and bundle its files and diff for the testers (never runs PR code). synthesize: the main reviewer, a read-only agent on the base branch that reads the PR's Jira ticket and linked designs, the code around the change and the repo's docs, reviews the diff, folds in both testers' reports, leaves its findings as inline comments on the diff, posts one sticky summary comment and closes the check. abandon: closes the check and tells the PR when the run ended without a review. answer: replies to one person's question on the PR (a comment that mentions clanker-in-chief, or a reply in one of its threads) from a read-only session on the base branch, with the diff, its last summary and the ticket."
 inputs:
   step:
-    description: "prepare, synthesize or abandon"
+    description: "prepare, synthesize, abandon or answer"
     required: true
   github-token:
-    description: "a Touchless Bot App token for the PR's repo only. prepare: contents + pull-requests read; synthesize: contents read, issues + pull-requests write (posting falls back to it when post-token is blank, and it re-requests clanker-in-chief after the inline review); abandon: issues + pull-requests write, for the didn't-finish comment review when post-token is blank"
+    description: "a Touchless Bot App token for the PR's repo only. prepare: contents + pull-requests read; synthesize: contents read, issues + pull-requests write (posting falls back to it when post-token is blank, and it dismisses second look's own earlier change requests after a pass; it never requests a reviewer); abandon: issues + pull-requests write, for the didn't-finish comment review when post-token is blank"
     required: false
   checks-token:
     description: "a Touchless Bot App token with checks write on the PR's repo, minted on its own so a missing Checks permission only means no check. blank: no check"
     required: false
   post-token:
-    description: "synthesize, abandon: clanker-in-chief's classic PAT (repo), so the review, its inline comments and the didn't-finish reply come from that user. without it the App posts as touchless-bot[bot]"
+    description: "synthesize, abandon, answer: clanker-in-chief's classic PAT (repo), so the review, its inline comments, answers and the didn't-finish reply come from that user. without it the App posts as touchless-bot[bot]"
     required: false
   repository:
     description: "the PR's repo, owner/name"
@@ -31,6 +31,12 @@ inputs:
   check-run-id:
     description: "synthesize, abandon: the check prepare opened"
     required: false
+  comment-id:
+    description: "answer: the id of the comment that asked"
+    required: false
+  comment-kind:
+    description: "answer: issue (the PR's conversation) or review (an inline thread)"
+    required: false
   result:
     description: "abandon: the reviewer job's result (cancelled, failure, skipped)"
     required: false
@@ -39,6 +45,24 @@ inputs:
     required: false
   preview-wait-minutes:
     description: "prepare: how long to wait for the head commit's preview deploys (default 10)"
+    required: false
+  dash-signin:
+    description: "prepare: `on` signs the testers in to an exo Dash preview as bot@touchless.io on beta-enabled runs (dashSignIn.ts); anything else leaves them logged out"
+    required: false
+  dash-client-id:
+    description: "prepare: Second Look's read-only Auth0 client for core-api"
+    required: false
+  dash-client-secret:
+    description: "prepare: that client's secret; used only in this step, never passed on"
+    required: false
+  dash-auth-url:
+    description: "prepare: the Auth0 tenant (default https://auth.touchless.io)"
+    required: false
+  dash-audience:
+    description: "prepare: the API the token is for (default https://core-api.touchless.io)"
+    required: false
+  signin-transport-key:
+    description: "prepare: 32 random bytes, base64, that seal the Dash session into the dash-session output; the testers get the same key to open it"
     required: false
   anthropic-api-key:
     required: false
@@ -49,7 +73,7 @@ inputs:
   openai-model:
     required: false
   budget-usd:
-    description: "the Claude reviewer's spend cap per run (default 3)"
+    description: "the Claude reviewer's spend cap per run (default 3; 1 for an answer)"
     required: false
   jira-url:
     required: false
@@ -70,6 +94,9 @@ outputs:
     value: ${{ steps.pull.outputs.head-sha }}
   check-run-id:
     value: ${{ steps.check.outputs.check-run-id }}
+  dash-session:
+    description: "prepare: the Dash preview session, sealed with signin-transport-key; blank when not signed in"
+    value: ${{ steps.dash.outputs.dash-session }}
 runs:
   using: composite
   steps:
@@ -85,6 +112,7 @@ runs:
         SECOND_LOOK_REPOSITORY: ${{ inputs.repository }}
         SECOND_LOOK_NUMBER: ${{ inputs.number }}
         SECOND_LOOK_HEAD_SHA: ${{ inputs.head-sha }}
+        SECOND_LOOK_ANSWERING: ${{ inputs.step == 'answer' }}
         SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
     - id: check
       if: inputs.step == 'prepare' && inputs.checks-token != ''
@@ -121,9 +149,25 @@ runs:
       run: node "$GITHUB_ACTION_PATH/awaitPreviews.ts"
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        SECOND_LOOK_CHECKS_TOKEN: ${{ inputs.checks-token }}
         SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
         SECOND_LOOK_PREVIEW_WAIT_MINUTES: ${{ inputs.preview-wait-minutes }}
         SECOND_LOOK_PREVIEWS_FILE: ${{ runner.temp }}/second-look-bundle/previews.json
+    # before the bundle is uploaded, so previews.json carries the sign-in note; the session itself only leaves sealed
+    - id: dash
+      if: inputs.step == 'prepare' && inputs.dash-signin == 'on'
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/dashSignIn.ts"
+      env:
+        SECOND_LOOK_DASH_SIGNIN: ${{ inputs.dash-signin }}
+        SECOND_LOOK_BETA_ENABLED: ${{ inputs.beta-enabled }}
+        SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
+        SECOND_LOOK_PREVIEWS_FILE: ${{ runner.temp }}/second-look-bundle/previews.json
+        SECOND_LOOK_DASH_CLIENT_ID: ${{ inputs.dash-client-id }}
+        SECOND_LOOK_DASH_CLIENT_SECRET: ${{ inputs.dash-client-secret }}
+        SECOND_LOOK_DASH_AUTH_URL: ${{ inputs.dash-auth-url }}
+        SECOND_LOOK_DASH_AUDIENCE: ${{ inputs.dash-audience }}
+        SECOND_LOOK_SIGNIN_TRANSPORT_KEY: ${{ inputs.signin-transport-key }}
     - if: inputs.step == 'prepare'
       shell: bash
       working-directory: second-look-source
@@ -142,9 +186,36 @@ runs:
         name: second-look-bundle
         path: ${{ runner.temp }}/second-look-bundle
         retention-days: 1
-    - if: inputs.step == 'synthesize'
+    - if: inputs.step == 'synthesize' || inputs.step == 'answer'
       shell: bash
       run: npm install --global --no-audit --no-fund --loglevel=error @anthropic-ai/claude-code @openai/codex
+    # the codex reviewer's read-only sandbox is bubblewrap, which needs a user namespace with its own network. the runner
+    # image (ubuntu 24.04) has no bwrap, so codex used its bundled copy, which apparmor's user-namespace restriction
+    # refuses (bwrap: loopback: Failed RTM_NEWADDR): every command failed and the review came from the diff alone. so this
+    # step gives codex the distro's /usr/bin/bwrap and lifts exactly that restriction, kernel.apparmor_restrict_unprivileged_userns=0
+    # (and kernel.unprivileged_userns_clone=1 where that key exists), on this runner vm only. the vm is thrown away after
+    # the job, no apparmor profile is touched, and codex keeps --sandbox read-only with no network. approved by the owner
+    # on 2026-11-19. failures are warnings, then the probe logs whether the sandbox starts
+    - if: inputs.step == 'synthesize' || inputs.step == 'answer'
+      shell: bash
+      run: |
+        sudo -n apt-get install -y -qq --no-install-recommends bubblewrap >/dev/null 2>&1 \
+          || { sudo -n apt-get update -qq >/dev/null 2>&1 && sudo -n apt-get install -y -qq --no-install-recommends bubblewrap >/dev/null 2>&1; } \
+          || echo "::warning title=Second Look (beta)::couldn't install bubblewrap; codex falls back to its bundled copy"
+        for lift in kernel.apparmor_restrict_unprivileged_userns=0 kernel.unprivileged_userns_clone=1; do
+          if sysctl -n "${lift%=*}" >/dev/null 2>&1; then
+            sudo -n sysctl -w "$lift" >/dev/null 2>"$RUNNER_TEMP/sysctl.err" \
+              || echo "::warning title=Second Look (beta)::couldn't set $lift on this runner (apparmor's user-namespace restriction): $(tr '\n' ' ' < "$RUNNER_TEMP/sysctl.err")"
+          else
+            echo "${lift%=*}: not on this runner, nothing to lift"
+          fi
+        done
+        echo "bwrap: $(command -v bwrap || echo 'not on PATH')"
+        if refused="$(codex sandbox -- ls -A . 2>&1 >/dev/null)"; then
+          echo "codex sandbox: starts"
+        else
+          echo "::warning title=Second Look (beta)::codex's read-only sandbox can't start on this runner, so a Codex review can't read the repo: ${refused//$'\n'/ }"
+        fi
     - if: inputs.step == 'synthesize'
       uses: actions/download-artifact@v6
       continue-on-error: true
@@ -152,7 +223,7 @@ runs:
         pattern: second-look-report-*
         merge-multiple: true
         path: ${{ runner.temp }}/second-look-reports
-    - if: inputs.step == 'synthesize'
+    - if: inputs.step == 'synthesize' || inputs.step == 'answer'
       shell: bash
       run: node "$GITHUB_ACTION_PATH/gatherContext.ts"
       env:
@@ -183,6 +254,21 @@ runs:
         SECOND_LOOK_REPORTS_DIRECTORY: ${{ runner.temp }}/second-look-reports
         SECOND_LOOK_DEFAULT_RULES: ${{ github.action_path }}/rules.md
         SECOND_LOOK_TESTING_RULES: ${{ github.action_path }}/testingRules.md
+    - if: inputs.step == 'answer'
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/answer.ts"
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        SECOND_LOOK_POST_TOKEN: ${{ inputs.post-token }}
+        SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
+        SECOND_LOOK_COMMENT_ID: ${{ inputs.comment-id }}
+        SECOND_LOOK_COMMENT_KIND: ${{ inputs.comment-kind }}
+        SECOND_LOOK_CONTEXT_DIRECTORY: ${{ runner.temp }}/second-look-inputs/context
+        SECOND_LOOK_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        SECOND_LOOK_OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        SECOND_LOOK_ANTHROPIC_MODEL: ${{ inputs.anthropic-model }}
+        SECOND_LOOK_OPENAI_MODEL: ${{ inputs.openai-model }}
+        SECOND_LOOK_BUDGET_USD: ${{ inputs.budget-usd }}
     - if: inputs.step == 'abandon' && inputs.checks-token != '' && inputs.check-run-id != ''
       shell: bash
       run: node "$GITHUB_ACTION_PATH/checkRun.ts" abandon
