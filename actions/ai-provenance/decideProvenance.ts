@@ -14,7 +14,7 @@ export type ProvenanceDecision = { state: "success" | "failure" | "neutral" | "p
  * the check's outcome:
  * 1. harness-made (any signal) without the App's attestation on the current
  *    head → failure, with `outsideMcpFailure`;
- * 2. beta-enabled → pending until Second Look has a verdict on the head;
+ * 2. in Second Look's scope (`betaEnabled`) → pending until Second Look has a verdict on the head;
  *    approved passes, changes requested fails;
  * 3. otherwise success (human-made prs pass at once).
  * in `evaluate` mode nothing blocks or waits: a failure or pending becomes
@@ -24,8 +24,8 @@ export const decideProvenance = ({ harnessSignals, attestation, betaEnabled, ver
   const harness = harnessSignals.length > 0
   const decided: ProvenanceDecision =
     harness && !attestation.attested ? { state: "failure", title: outsideMcpFailure }
-    : betaEnabled && verdict === "pending" ? { state: "pending", title: "beta-enabled PR: waiting for Second Look's verdict on this head" }
-    : betaEnabled && verdict === "changes_requested" ? { state: "failure", title: "beta-enabled PR: Second Look requested changes on this head; address them and push (then update_pr if a harness made it)" }
+    : betaEnabled && verdict === "pending" ? { state: "pending", title: "PR in Second Look's scope: waiting for Second Look's verdict on this head" }
+    : betaEnabled && verdict === "changes_requested" ? { state: "failure", title: "PR in Second Look's scope: Second Look requested changes on this head; address them and push (then update_pr if a harness made it)" }
     : betaEnabled ? { state: "success", title: harness ? "attested through the touchless-bot MCP, and Second Look approved this head" : "Second Look approved this head" }
     : harness ? { state: "success", title: "harness-made and attested through the touchless-bot MCP" }
     : { state: "success", title: "no coding-agent signals: human-made" }

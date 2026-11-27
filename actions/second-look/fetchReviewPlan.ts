@@ -81,7 +81,7 @@ export const planOf = (environment: NodeJS.ProcessEnv = process.env): ReviewPlan
  */
 export const effectivePlanOf = (plan: ReviewPlan, betaEnabled: boolean): ReviewPlan =>
   plan.skip && betaEnabled
-    ? { ...plan, skip: undefined, review: "full", fullReason: `beta scope, so not skipped (${plan.skip})`, testersReason: "the run was planned as a skip", anthropicModel: undefined, modelReason: "beta scope review of a planned skip" }
+    ? { ...plan, skip: undefined, review: "full", fullReason: `in Second Look's scope, so not skipped (${plan.skip})`, testersReason: "the run was planned as a skip", anthropicModel: undefined, modelReason: "review of a planned skip in Second Look's scope" }
     : plan
 
 /**

@@ -38,4 +38,4 @@ const main = async () => {
   throw new Error(`usage: checkRun.ts start | abandon (got "${action ?? ""}")`)
 }
 
-if (import.meta.main) main().catch((error: Error) => console.log(`::warning title=Second Look (beta)::no check on the PR: ${error.message} (the Touchless Bot App needs Checks: read and write)`))
+if (import.meta.main) main().catch((error: Error) => console.log(`::warning title=Second Look::no check on the PR: ${error.message} (the Touchless Bot App needs Checks: read and write)`))

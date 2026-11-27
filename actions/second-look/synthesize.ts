@@ -21,6 +21,8 @@
  * env: SECOND_LOOK_POST_TOKEN (clanker-in-chief's classic PAT, repo; falls back to GITHUB_TOKEN),
  * GITHUB_TOKEN (the touchless bot app: contents read, issues + pull requests write on the pr's repo),
  * SECOND_LOOK_CHECKS_TOKEN (the app with checks write; blank when the app lacks it, then there's no check),
+ * SECOND_LOOK_RESOLVE_TOKEN (the app with contents + pull requests write, used only to resolve review threads
+ * where the poster can't; blank: only the poster's own access resolves them),
  * SECOND_LOOK_EVENT_PATH (the pr, see targetOf.ts), RUNNER_TEMP, SECOND_LOOK_ANTHROPIC_API_KEY and/or
  * SECOND_LOOK_OPENAI_API_KEY, optional SECOND_LOOK_ANTHROPIC_MODEL, SECOND_LOOK_OPENAI_MODEL, SECOND_LOOK_BETA_ENABLED,
  * SECOND_LOOK_REPORTS_DIRECTORY (the testers' downloaded reports), SECOND_LOOK_DEFAULT_RULES,
@@ -55,6 +57,7 @@ import { answeredThreadsOf } from "./answeredThreadsOf.ts"
 import { conversationDigestOf } from "./conversationDigestOf.ts"
 import { conversationOf } from "./conversationOf.ts"
 import { earlierSectionOf } from "./earlierSectionOf.ts"
+import { fixedUnresolvedOf } from "./fixedUnresolvedOf.ts"
 import { followUpThreads, stillOpenOf } from "./followUpThreads.ts"
 import { ledgerOf, nextLedgerOf } from "./ledgerOf.ts"
 import { lineFingerprintOf } from "./lineFingerprint.ts"
@@ -76,6 +79,7 @@ import type { EarlierThread, ProviderError, PullConversation } from "./types.ts"
 import { writeHeadFiles } from "./writeHeadFiles.ts"
 import { prepareAuth } from "./prepareAuth.ts"
 import { storedReportOf } from "./reportOf.ts"
+import { resolveLeftOpen } from "./resolveLeftOpen.ts"
 import { reviewerFamilyOf } from "./reviewerFamilyOf.ts"
 import { repoRulePaths, rulesOf } from "./rulesOf.ts"
 import { withTestingRules } from "./withTestingRules.ts"
@@ -159,14 +163,14 @@ const review = async ({ reviewer, prompt }: { reviewer: Family; prompt: string }
 const skipRun = async ({ repository, pull, reason }: { repository: string; pull: { number: number; head: { sha: string } }; reason: string }) => {
   const postToken = process.env.SECOND_LOOK_POST_TOKEN || process.env.GITHUB_TOKEN || ""
   const checkToken = process.env.SECOND_LOOK_CHECKS_TOKEN || ""
-  const body = `**Second Look (beta): skipped** · no model review\n\nSkipped: ${reason}. Nothing was reviewed; the switches are in Second Look's README "Settings".`
+  const body = `**Second Look: skipped** · no model review\n\nSkipped: ${reason}. Nothing was reviewed; the switches are in Second Look's README "Settings".`
   console.log(body)
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${body}\n`)
   await postReview({ token: postToken, repository, number: pull.number, commitId: pull.head.sha, event: "COMMENT", comments: [], body })
-    .catch((failure: Error) => console.log(`::warning title=Second Look (beta)::couldn't post the skip note: ${failure.message}`))
+    .catch((failure: Error) => console.log(`::warning title=Second Look::couldn't post the skip note: ${failure.message}`))
   const checkRunId = process.env.SECOND_LOOK_CHECK_RUN_ID
   if (checkRunId && checkToken) await sendCheckRun({ token: checkToken, repository, id: checkRunId, body: checkSkippedOf({ reason }) })
-    .catch((failure: Error) => console.log(`::warning title=Second Look (beta)::couldn't close the check: ${failure.message}`))
+    .catch((failure: Error) => console.log(`::warning title=Second Look::couldn't close the check: ${failure.message}`))
 }
 
 const main = async () => {
@@ -192,7 +196,7 @@ const main = async () => {
       execFileSync("git", ["merge-base", "--is-ancestor", since, pull.head.sha], { stdio: "ignore" })
       return gitDiffOf({ base: since, head: pull.head.sha }).diff
     } catch {
-      console.log(`::notice title=Second Look (beta)::${since.slice(0, 7)} isn't an ancestor of the head here, so this reviews the whole PR with the configured model`)
+      console.log(`::notice title=Second Look::${since.slice(0, 7)} isn't an ancestor of the head here, so this reviews the whole PR with the configured model`)
       return undefined
     }
   })() : undefined
@@ -205,13 +209,16 @@ const main = async () => {
   const postToken = process.env.SECOND_LOOK_POST_TOKEN || process.env.GITHUB_TOKEN || ""
   const appToken = process.env.GITHUB_TOKEN || postToken
   const checkToken = process.env.SECOND_LOOK_CHECKS_TOKEN || ""
+  // resolving a thread takes write access to the repo: the poster has it in some repos only, and an app token needs
+  // contents write for it, which only the resolve token carries
+  const resolveTokens = [postToken, process.env.SECOND_LOOK_RESOLVE_TOKEN || "", appToken]
   const author = process.env.SECOND_LOOK_POST_TOKEN ? posterLogin : appLogin
   // what was already said on the pr, read once: the earlier threads to follow up, and what became of every finding,
   // so one that was fixed, answered or made by someone else isn't raised again
   // without it the review would repeat every earlier point, so an unreadable conversation fails the run (the check
   // ends "Didn't finish") after one retry
   const conversation: PullConversation = await retriedOnceOf(() => conversationOf({ token: postToken, repository, number: pull.number }), (failure) =>
-    console.log(`::warning title=Second Look (beta)::couldn't read the PR's conversation, trying once more: ${failure.message}`))
+    console.log(`::warning title=Second Look::couldn't read the PR's conversation, trying once more: ${failure.message}`))
     .catch(async (failure: Error) => {
       const reason = `couldn't read the PR's conversation, so it won't review without knowing what was already said: ${failure.message}`
       const checkRunId = process.env.SECOND_LOOK_CHECK_RUN_ID
@@ -223,7 +230,7 @@ const main = async () => {
   const threads = [...open, ...answeredThreadsOf({ conversation, author, after: open.length })]
   // the sticky comment keeps its first date, so it's found by paging every comment, not among the latest 100
   const sticky = await stickyCommentOf({ token: postToken, repository, number: pull.number, marker: commentMarker, author }).catch((failure: Error) => {
-    console.log(`::warning title=Second Look (beta)::couldn't read the last summary comment, so its summary-only findings aren't in the review: ${failure.message}`)
+    console.log(`::warning title=Second Look::couldn't read the last summary comment, so its summary-only findings aren't in the review: ${failure.message}`)
     return undefined
   })
   const ledger = ledgerOf(sticky?.body ?? undefined)
@@ -253,7 +260,7 @@ const main = async () => {
   console.log(`second look reviewer: ${reviewer} ${modelOf(reviewer)}${reviewer === "anthropic" && smallModel ? ` (smaller model: ${plan.modelReason})` : ""}`)
   const { verdict: reviewed, error, outage, usage: reviewerUsage } = await review({ reviewer, prompt }).catch((failure: Error): Reviewed => ({ error: failure.message }))
   const betaEnabled = betaEnabledOf(process.env.SECOND_LOOK_BETA_ENABLED)
-  const warn = (line: string) => console.log(`::warning title=Second Look (beta)::${line}`)
+  const warn = (line: string) => console.log(`::warning title=Second Look::${line}`)
   // a tier-restricted author's tier 1-2 pr is a block unless a tech lead overrode it; unreadable events mean no override
   const restricted = tierRestrictedAuthors.some((login) => login.toLowerCase() === (pull.user?.login ?? "").toLowerCase())
   const overriddenBy = reviewed && reviewed.tier > 0 && restricted ? tierOverrideOf(await labelEventsOf({ token: appToken, repository, number: pull.number }).catch((failure: Error) => {
@@ -267,10 +274,13 @@ const main = async () => {
   for (const { spot, finding } of dropped) console.log(`dropped a repeat on ${spot.path}:${spot.line}, already answered in ${spot.url}: ${finding.note.slice(0, 120)}`)
   // a repeat on a spot that already had its one reply isn't posted again, but a blocking one still stands and keeps the block
   const { verdict, standing, downgraded } = withoutRepeatsOf({ verdict: reviewedVerdict, dropped, threads })
-  if (downgraded) console.log("::notice title=Second Look (beta)::no changes requested: what blocked was only nits already answered in their threads")
-  const followUps = verdict ? await followUpThreads({ threads, followUps: verdict.earlier, onThread, headSha: pull.head.sha, reviewer, token: postToken, resolveTokens: [postToken, appToken], repository, number: pull.number, warn, fingerprintOf: (thread) => (thread.line === null ? undefined : fingerprintAt(thread.path, thread.line)) }) : []
+  if (downgraded) console.log("::notice title=Second Look::no changes requested: what blocked was only nits already answered in their threads")
+  const followUps = verdict ? await followUpThreads({ threads, followUps: verdict.earlier, onThread, headSha: pull.head.sha, reviewer, token: postToken, resolveTokens, repository, number: pull.number, warn, fingerprintOf: (thread) => (thread.line === null ? undefined : fingerprintAt(thread.path, thread.line)) }) : []
+  // threads an earlier run called fixed and github wouldn't let it resolve: resolved now, with no second reply
+  const leftOpen = await resolveLeftOpen({ threads: fixedUnresolvedOf({ conversation, author }), tokens: resolveTokens, warn })
+  if (leftOpen.length) console.log(`resolved ${leftOpen.length} thread(s) an earlier run called fixed: ${leftOpen.map((thread) => thread.comments[0]?.url ?? thread.id).join(", ")}`)
   const event = reviewEventOf({ verdict, betaEnabled })
-  const headline = !verdict && outage ? "**Second Look (beta): did not review**" : headlineOf({ verdict, open: stillOpenOf(followUps).length + standing.length, betaEnabled })
+  const headline = !verdict && outage ? "**Second Look: did not review**" : headlineOf({ verdict, open: stillOpenOf(followUps).length + standing.length, betaEnabled })
   const reviewBody = reviewBodyOf({
     headline,
     summary: verdict ? [threadKeysLinkedOf(threads)(verdict.summary), ...(standing.length ? ["", ...standingLinesOf(standing)] : [])].join("\n") : outage ? outageLeadOf(outage) : error ? `Couldn't review: ${error}` : undefined,
@@ -297,7 +307,7 @@ const main = async () => {
   const summaryOnly = verdict ? verdict.findings.filter((finding) => !onDiff.has(finding) && !inThreads.has(finding)) : []
   // built against the comment it replaces, so the ledger always carries on from what's actually there
   // the reviewed head rides along for the next run's diff; a run without a verdict keeps the last one
-  const bodyFor = (existing: string | undefined) => commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, headSha: pull.head.sha, scopeReason: betaEnabled ? "beta scope" : process.env.SECOND_LOOK_REQUESTED_BY ? `requested by @${process.env.SECOND_LOOK_REQUESTED_BY}` : "requested", onDiff, reviewUrl, followUps, betaEnabled, overriddenBy, standing, ledger: nextLedgerOf({ earlier: ledgerOf(existing), findings: summaryOnly, sha: pull.head.sha }), outage, reviewerUsage, plan: incremental !== undefined ? plan : { ...plan, review: "full" }, reviewed: verdict ? { sha: pull.head.sha, tier: verdict.tier } : lastReviewOf(existing), runId: process.env.GITHUB_RUN_ID })
+  const bodyFor = (existing: string | undefined) => commentBodyOf({ verdict, error, reports, reviewer, reviewerModel: modelOf(reviewer), harness, headSha: pull.head.sha, scopeReason: betaEnabled ? "in Second Look's scope" : process.env.SECOND_LOOK_REQUESTED_BY ? `requested by @${process.env.SECOND_LOOK_REQUESTED_BY}` : "requested", onDiff, reviewUrl, followUps, betaEnabled, overriddenBy, standing, ledger: nextLedgerOf({ earlier: ledgerOf(existing), findings: summaryOnly, sha: pull.head.sha }), outage, reviewerUsage, plan: incremental !== undefined ? plan : { ...plan, review: "full" }, reviewed: verdict ? { sha: pull.head.sha, tier: verdict.tier } : lastReviewOf(existing), runId: process.env.GITHUB_RUN_ID })
   const body = bodyFor(sticky?.body ?? undefined)
   console.log(body)
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${body}\n\n**Reviewer:** ${cliNameOf(reviewer)} ${modelOf(reviewer)}, cost ${costTextOf(reviewerUsage)}\n`)
@@ -307,18 +317,18 @@ const main = async () => {
       return url
     })
     .catch((failure: Error) => {
-      console.log(`::warning title=Second Look (beta)::couldn't post the comment: ${failure.message}`)
+      console.log(`::warning title=Second Look::couldn't post the comment: ${failure.message}`)
       return undefined
     })
   const checkRunId = process.env.SECOND_LOOK_CHECK_RUN_ID
   if (checkRunId && checkToken) await sendCheckRun({ token: checkToken, repository, id: checkRunId, body: checkEndOf({ verdict, error, betaEnabled, commentUrl, outage, outageRed }) })
-    .catch((failure: Error) => console.log(`::warning title=Second Look (beta)::couldn't close the check: ${failure.message}`))
+    .catch((failure: Error) => console.log(`::warning title=Second Look::couldn't close the check: ${failure.message}`))
   // a provider outage fails the run, so it shows red in the second-look repo's actions and to whoever watches it
   const outages = [...(outage ? [outage] : []), ...reports.flatMap((report) => (report.providerError ? [report.providerError] : []))]
   for (const each of outages) console.log(`::error title=Second Look provider outage::${providerErrorLineOf(each)} (${repository}#${pull.number})`)
   if (outages.length && outageRed) process.exitCode = 1
-  if (error) return console.log(`::warning title=Second Look (beta)::couldn't review: ${error}`)
-  if (verdict?.verdict === "block") console.log("::warning title=Second Look (beta)::requested changes on this PR; see the comment.")
+  if (error) return console.log(`::warning title=Second Look::couldn't review: ${error}`)
+  if (verdict?.verdict === "block") console.log("::warning title=Second Look::requested changes on this PR; see the comment.")
 }
 
 if (import.meta.main) main().catch((error: Error) => {

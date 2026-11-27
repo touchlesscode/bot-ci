@@ -35,7 +35,7 @@ export const dashSignInGateOf = ({ switchValue, betaEnabled, repository, owner, 
   if (switchValue?.trim().toLowerCase() !== "on") return { skip: "Dash sign-in is off (SECOND_LOOK_DASH_SIGNIN isn't on)" }
   const allowed = dashSignInRepos.map((name) => `${owner}/${name}`.toLowerCase())
   if (!allowed.includes(repository.toLowerCase())) return { skip: `Dash sign-in only covers ${allowed.join(", ")}` }
-  if (!betaEnabled) return { skip: "Dash sign-in only runs for PRs in the beta scope" }
+  if (!betaEnabled) return { skip: "Dash sign-in only runs for PRs in Second Look's scope" }
   if ((headRepository ?? "").toLowerCase() !== repository.toLowerCase()) return { skip: "the PR's head is in another repo" }
   if (!hasClientSecret || !hasTransportKey) return { skip: "Dash sign-in isn't set up (SECOND_LOOK_DASH_CLIENT_SECRET or SECOND_LOOK_SIGNIN_TRANSPORT_KEY is missing)" }
   for (const preview of previews) {

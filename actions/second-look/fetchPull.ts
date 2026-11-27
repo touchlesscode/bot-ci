@@ -56,12 +56,12 @@ const main = async () => {
   const refusal = refusalOf({ repository, owner, pull: fetched, answering })
   if (refusal) throw new Error(refusal)
   const headSha = process.env.SECOND_LOOK_HEAD_SHA
-  if (headSha && headSha !== fetched.head.sha) console.log(`::notice title=Second Look (beta)::${repository}#${number} moved to ${fetched.head.sha.slice(0, 7)} after this run started; reviewing ${headSha.slice(0, 7)}`)
+  if (headSha && headSha !== fetched.head.sha) console.log(`::notice title=Second Look::${repository}#${number} moved to ${fetched.head.sha.slice(0, 7)} after this run started; reviewing ${headSha.slice(0, 7)}`)
   const pull = pinnedPullOf(fetched, headSha)
   const path = process.env.SECOND_LOOK_EVENT_PATH ?? ""
   mkdirSync(dirname(path), { recursive: true })
   const plan = answering ? undefined : await fetchReviewPlan({ get, token, repository, pull }).catch((error: Error) => {
-    console.log(`::warning title=Second Look (beta)::couldn't plan the run, so it reviews everything: ${error.message}`)
+    console.log(`::warning title=Second Look::couldn't plan the run, so it reviews everything: ${error.message}`)
     return defaultPlan
   })
   if (plan) console.log(planLineOf(plan))

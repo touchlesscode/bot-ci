@@ -42,7 +42,7 @@ export const agentPromptOf = ({ family, repository, pull, stat, diff, truncated,
   diffPath: string
   previews?: PreviewsFile
   access?: DashAccess
-}) => `You are the ${familyName[family]} tester for Second Look (beta). An ${familyName[otherFamily[family]]} tester is doing the same job independently; a main reviewer compares your two reports, so report only what you actually ran and saw.
+}) => `You are the ${familyName[family]} tester for Second Look. An ${familyName[otherFamily[family]]} tester is doing the same job independently; a main reviewer compares your two reports, so report only what you actually ran and saw.
 
 Second Look is an opt-in reviewer. All it does is comment on the PR (and, once a repo turns that on, fail its own check). You can't change the PR, and nothing you do here should change anything anywhere else.
 

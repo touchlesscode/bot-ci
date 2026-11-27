@@ -74,4 +74,4 @@ const main = async () => {
   console.log(`second look: told ${repository}#${number} the run didn't finish${replied === "review" ? " (comment review)" : ""}`)
 }
 
-if (import.meta.main) main().catch((error: Error) => console.log(`::warning title=Second Look (beta)::couldn't tell the PR the run didn't finish: ${error.message}`))
+if (import.meta.main) main().catch((error: Error) => console.log(`::warning title=Second Look::couldn't tell the PR the run didn't finish: ${error.message}`))

@@ -17,7 +17,7 @@ const resolvedByOf = (login: string | null) => (login ? `; resolved by @${login}
 /** a finding's severity and its words, without second look's marker, old header, label and footnote */
 const gistOf = (body: string) => {
   const severity = /\*\*Warning:\*\*/.test(body) ? "warning" : /\*\*Nit:\*\*/.test(body) ? "nit" : "finding"
-  const text = body.replace(findingMarker, "").replace(/^\s*\*\*Second Look \(beta\)\*\*[^\n]*\n+/, "").replace(/\*\*(Warning|Nit):\*\*/, "")
+  const text = body.replace(findingMarker, "").replace(/^\s*\*\*Second Look(?: \(beta\))?\*\*[^\n]*\n+/, "").replace(/\*\*(Warning|Nit):\*\*/, "")
   return { severity, gist: conversationTextOf(text, digestLimits.itemChars) }
 }
 

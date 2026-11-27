@@ -10,7 +10,7 @@ The CI and guardrails for bot-built code in touchlesscode. Org rulesets make it 
 | **Build** | repos with no PR CI of their own | install, lint, typecheck, test, coverage, build; bundles Worker previews |
 | **Previews** | after Build, when it bundled any | deploys staging previews to `<app>-<version>.touchlessapis.com` ("Previews" below) |
 | **E2E** | after Previews, when the repo has `test:e2e` | the repo's Playwright tests against each preview it deployed |
-| **Second Look (beta)** | when someone asks, and once on its own for a PR in its beta scope (never on a push) | AI testers plus a context-aware reviewer. Never a required check; in the beta scope its approval gates AI Provenance and the bot's Slack *Approve*. See [second-look](https://github.com/touchlesscode/second-look) |
+| **Second Look** | when someone asks, and once on its own for a PR in its scope (never on a push) | AI testers plus a context-aware reviewer. Never a required check; in Second Look's scope its approval gates AI Provenance and the bot's Slack *Approve*. See [second-look](https://github.com/touchlesscode/second-look) |
 
 A second ruleset, `review-required`, needs one human approval given after the last push, and blocks force-pushes and deleting the default branch. The Touchless Bot App has no bypass, so it can open PRs but never merge one alone.
 
@@ -44,7 +44,7 @@ Using Claude Code, Codex or Cursor is fine. A PR they made has to come through T
 - **Which PRs it looks at:** any commit with a coding-agent trailer (`Co-Authored-By: Claude …`, `Co-authored-by: Cursor Agent …`, `Co-authored-by: Codex …`, `Generated-By:`, `AI-Agent:`), or a PR opened by an agent app (`cursor[bot]`, `claude[bot]`, `chatgpt-codex-connector[bot]`, `copilot-swe-agent[bot]`, `devin-ai-integration[bot]`). Everything else passes straight away.
 - **What it wants:** a successful **Touchless Bot MCP** check from the Touchless Bot App on the PR's current head commit. Connect your tool with `/mcp setup` in a DM with Touchless Bot. Then, from the tool, push and call `open_pr`; after every later push, call `update_pr`. Already opened the PR yourself? `update_pr` with its number attests it.
 - **The failure** reads `made by a personal harness outside the touchless-bot MCP: resubmit with open_pr / update_pr`. Once the MCP attests the head it re-runs this check, so you don't need to push again.
-- **Beta-enabled PRs** (Touchless Bot's beta lane, the `second-look-beta` label, or a repo with `second-look-mode=beta`) also wait for Second Look's verdict on the head: approve passes, request-changes fails.
+- **PRs in Second Look's scope** (Touchless Bot's beta lane, the `second-look-beta` label, or a repo with `second-look-mode=beta`) also wait for Second Look's verdict on the head: approve passes, request-changes fails.
 - Until `AI_PROVENANCE_MODE=enforce`, it never blocks: it passes and adds a neutral *AI Provenance (evaluate)* check saying what enforce would do.
 
 ## Build
@@ -150,7 +150,7 @@ Org variables; none of them need a re-publish.
 | `BOT_CI_PATCH_COVERAGE_REPOS` | `apps` | comma-separated repos that get patch coverage instead of full |
 | `PR_LINT_SCOPE` | `bot` | `all` lints everyone's PRs |
 | `AI_PROVENANCE_MODE` | `evaluate` | `enforce` fails harness-made PRs without the attestation |
-| `AI_PROVENANCE_WAIT_MINUTES` | `50` | how long a beta-enabled PR waits for Second Look's verdict |
+| `AI_PROVENANCE_WAIT_MINUTES` | `50` | how long a PR in Second Look's scope waits for Second Look's verdict |
 
 Older `ORG_CI_*` names still work: this repo was `org-ci` until October 2026.
 

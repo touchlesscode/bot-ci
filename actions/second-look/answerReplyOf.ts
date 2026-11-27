@@ -15,7 +15,7 @@ const quoteOf = (body: string) => {
 
 /** the answer as posted: in a thread just the answer, in the conversation quoting the question and mentioning who asked */
 export const answerReplyOf = ({ answer, question, reviewer }: { answer: string; question: Question; reviewer: Family }) => {
-  const footnote = `<sub>Second Look (beta) · answered via ${cliNameOf(reviewer)}</sub>`
+  const footnote = `<sub>Second Look · answered via ${cliNameOf(reviewer)}</sub>`
   if (question.kind === "review") return `${answerMarker}\n${answer.trim()}\n\n${footnote}`
   const quote = quoteOf(question.body)
   return `${answerMarker}\n${quote ? `> ${quote}\n\n` : ""}@${question.author} ${answer.trim()}\n\n${footnote}`
