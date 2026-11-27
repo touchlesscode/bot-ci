@@ -2,7 +2,7 @@
 # as a required workflow only its pull_request runs happen (rulesets ignore `types` and the other triggers);
 # the check_run / pull_request_review triggers apply where a repo runs this file itself. so a PR picks up a
 # new attestation by the touchless-bot MCP re-running failed runs on that head (update_pr / open_pr), and a
-# beta-enabled PR waits for Second Look inside the job (AI_PROVENANCE_WAIT_MINUTES).
+# PR in Second Look's scope waits for Second Look inside the job (AI_PROVENANCE_WAIT_MINUTES).
 name: AI Provenance
 
 on:

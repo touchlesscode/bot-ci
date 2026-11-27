@@ -103,7 +103,7 @@ const main = async () => {
   const prompt = answerPromptOf({ repository, pull, reviewer: family, question, diff: capped.text, truncated: capped.truncated, diffPath, headDirectory, summary, context: existsSync(contextPath) ? readFileSync(contextPath, "utf8") : "" })
 
   const { answer, error } = await answerOf({ family, prompt, inputs }).catch((failure: Error) => ({ answer: undefined, error: failure.message }))
-  if (error) console.log(`::warning title=Second Look (beta)::no answer for comment ${commentId}: ${error}`)
+  if (error) console.log(`::warning title=Second Look::no answer for comment ${commentId}: ${error}`)
   const body = answer ? answerReplyOf({ answer, question, reviewer: family }) : noAnswerReplyOf({ question, reason: error ?? "no answer" })
   if (question.kind === "review") await replyToThread({ token: postToken, repository, number: pull.number, commentId: question.replyTo, body })
   else {

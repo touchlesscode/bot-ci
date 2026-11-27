@@ -1,5 +1,5 @@
 name: ai-provenance
-description: Harness-made PRs (coding-agent commit trailers, or opened by a known agent app) pass only when their current head has the Touchless Bot App's "Touchless Bot MCP" check run (open_pr / update_pr); beta-enabled PRs also wait for Second Look's verdict. evaluate mode reports without blocking
+description: Harness-made PRs (coding-agent commit trailers, or opened by a known agent app) pass only when their current head has the Touchless Bot App's "Touchless Bot MCP" check run (open_pr / update_pr); PRs in Second Look's scope also wait for Second Look's verdict. evaluate mode reports without blocking
 inputs:
   github-token:
     required: true
@@ -7,7 +7,7 @@ inputs:
     description: "evaluate (default): neutral report, never blocks; enforce: fails"
     required: false
   wait-minutes:
-    description: "how long a beta-enabled PR waits in the job for Second Look's verdict (default 50)"
+    description: "how long a PR in Second Look's scope waits in the job for Second Look's verdict (default 50)"
     required: false
 runs:
   using: composite

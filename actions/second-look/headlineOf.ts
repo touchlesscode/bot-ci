@@ -5,7 +5,7 @@ const countOf = (count: number, noun: string) => (count ? [`${count} ${noun}${co
 
 /**
  * the first line of the review and the summary comment: the call, then what's behind it, like
- * "**Second Look (beta): changes requested** · 2 warnings, 1 nit, 3 still open". `open` is earlier threads not fixed yet.
+ * "**Second Look: changes requested** · 2 warnings, 1 nit, 3 still open". `open` is earlier threads not fixed yet.
  * a pass reads "approved" only on a beta-enabled pr, where it is one; elsewhere it's "no changes requested"
  */
 export const headlineOf = ({ verdict, open = 0, betaEnabled = false }: { verdict?: Verdict; open?: number; betaEnabled?: boolean }) => {
@@ -16,5 +16,5 @@ export const headlineOf = ({ verdict, open = 0, betaEnabled = false }: { verdict
     ...countOf(findings.filter(({ severity }) => severity === "nit").length, "nit"),
     ...(open ? [`${open} still open`] : []),
   ]
-  return `**Second Look (beta): ${call}**${counts.length ? ` · ${counts.join(", ")}` : ""}`
+  return `**Second Look: ${call}**${counts.length ? ` · ${counts.join(", ")}` : ""}`
 }

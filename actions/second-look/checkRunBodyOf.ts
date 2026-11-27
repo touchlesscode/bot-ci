@@ -1,7 +1,7 @@
 import { providerErrorLineOf } from "./providerErrorOf.ts"
 import type { ProviderError, Verdict } from "./types.ts"
 
-/** the check second look puts on a pr it reviews, named like the old required check */
+/** the check second look puts on a pr it reviews, named like the old required check. the name is an identifier (gates and the alert reader find the check by it), so it keeps "(beta)" until the later rename steps */
 export const checkName = "Second Look (beta)"
 
 /** the `external_id` of a beta-enabled run's check, so a gate can tell it from an informational one (infra/bot-ci/actions/second-look/betaScopeNames.ts) */
@@ -18,8 +18,8 @@ export const checkStartOf = ({ headSha, detailsUrl, requestedBy, betaEnabled = f
   details_url: detailsUrl,
   ...(betaEnabled ? { external_id: betaExternalId } : {}),
   output: {
-    title: betaEnabled ? "Reviewing (beta scope)" : "Reviewing",
-    summary: `${requestedBy ? `Requested by @${requestedBy}. ` : ""}An OpenAI and an Anthropic tester try the PR's test plan by hand (on its previews, canary packages or a sandbox build), then a main reviewer checks the change against its ticket and the repo's docs. The review lands as a comment on the PR in about 20-30 minutes.${betaEnabled ? " This PR is in Second Look's beta scope, so the review approves or requests changes and this check goes green or red. A person still approves the merge." : ""}`,
+    title: betaEnabled ? "Reviewing (in Second Look's scope)" : "Reviewing",
+    summary: `${requestedBy ? `Requested by @${requestedBy}. ` : ""}An OpenAI and an Anthropic tester try the PR's test plan by hand (on its previews, canary packages or a sandbox build), then a main reviewer checks the change against its ticket and the repo's docs. The review lands as a comment on the PR in about 20-30 minutes.${betaEnabled ? " This PR is in Second Look's scope, so the review approves or requests changes and this check goes green or red. A person still approves the merge." : ""}`,
   },
 })
 

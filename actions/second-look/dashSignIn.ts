@@ -96,4 +96,4 @@ const main = async () => {
   console.log(`dash sign-in: ${result.note.status}, ${result.note.note}`)
 }
 
-if (import.meta.main) await main().catch((error: Error) => console.log(`::warning title=Second Look (beta)::dash sign-in skipped: ${error.message}`))
+if (import.meta.main) await main().catch((error: Error) => console.log(`::warning title=Second Look::dash sign-in skipped: ${error.message}`))

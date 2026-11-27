@@ -39,9 +39,9 @@ const findingLineOf = (onDiff: ReadonlySet<Finding>, linked: (text: string) => s
   return `- ${labelOf(finding.severity)} ${locationOf(finding.file, finding.line)}${linked(finding.note)}${source}`
 }
 
-/** an earlier thread as a link named by its file and line, flagged when this run replied in it */
-const threadLinkOf = ({ thread, status }: ThreadOutcome) =>
-  `[\`${fileNameOf(thread.path)}${!thread.outdated && thread.line ? `:${thread.line}` : ""}\`](${thread.url})${status === "update" ? " (replied)" : ""}`
+/** an earlier thread as a link named by its file and line, flagged when this run replied in it, or called it fixed and couldn't resolve it */
+const threadLinkOf = ({ thread, status, resolved }: ThreadOutcome) =>
+  `[\`${fileNameOf(thread.path)}${!thread.outdated && thread.line ? `:${thread.line}` : ""}\`](${thread.url})${status === "update" ? " (replied)" : status === "fixed" && !resolved ? " (couldn't resolve it)" : ""}`
 
 /** what's fixed since the last look, what's still open, and the answered threads this run replied in: a line each, of links to the threads */
 const followUpLinesOf = (followUps: ThreadOutcome[]) => {
@@ -127,7 +127,7 @@ export const commentBodyOf = ({ verdict, error, reports, reviewer, reviewerModel
   ]
   const lines = [
     commentMarker,
-    !verdict && outage ? "**Second Look (beta): did not review**" : headlineOf({ verdict, open: stillOpenOf(followUps).length + standing.length, betaEnabled }),
+    !verdict && outage ? "**Second Look: did not review**" : headlineOf({ verdict, open: stillOpenOf(followUps).length + standing.length, betaEnabled }),
     "",
     verdict ? linked(verdict.summary) : outage ? outageLeadOf(outage) : `The main reviewer didn't answer: ${error ?? "unknown error"}. The testers' reports are below.`,
     ...(untested.length ? ["", ...untested.map((report) => `**Not tested:** ${providerErrorLineOf(report.providerError!)}, so the ${familyName[report.family]} tester didn't run.`)] : []),

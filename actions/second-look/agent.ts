@@ -132,5 +132,5 @@ if (import.meta.main) {
   const report = redactedReportOf(line ? { ...tested, access: line } : tested, secrets)
   writeReport(report)
   if (report.providerError) console.log(`::error title=Second Look provider outage::${report.summary}`)
-  else if (report.status !== "ran") console.log(`::warning title=Second Look (beta)::${report.summary}`)
+  else if (report.status !== "ran") console.log(`::warning title=Second Look::${report.summary}`)
 }

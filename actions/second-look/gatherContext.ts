@@ -54,4 +54,4 @@ const main = async () => {
   console.log(`second look context: tickets ${tickets.map((ticket) => ticket.key).join(", ") || "none"}; figma ${frames.filter((frame) => frame.imagePath).length}/${frames.length} frames${notes.length ? `; ${notes.join("; ")}` : ""}`)
 }
 
-if (import.meta.main) await main().catch((error: Error) => console.log(`::warning title=Second Look (beta)::couldn't gather the ticket context: ${error.message}`))
+if (import.meta.main) await main().catch((error: Error) => console.log(`::warning title=Second Look::couldn't gather the ticket context: ${error.message}`))

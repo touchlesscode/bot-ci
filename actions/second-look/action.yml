@@ -1,4 +1,4 @@
-name: Second Look (beta)
+name: Second Look
 description: "Second Look's steps outside the testers, in the private second-look repo's dispatched run. prepare: fetch the PR, open its check, wait for its previews and bundle its files and diff for the testers (never runs PR code). synthesize: the main reviewer, a read-only agent on the base branch that reads the PR's Jira ticket and linked designs, the code around the change and the repo's docs, reviews the diff, folds in both testers' reports, leaves its findings as inline comments on the diff, posts one sticky summary comment and closes the check. abandon: closes the check and tells the PR when the run ended without a review. answer: replies to one person's question on the PR (a comment that mentions clanker-in-chief, or a reply in one of its threads) from a read-only session on the base branch, with the diff, its last summary and the ticket."
 inputs:
   step:
@@ -9,6 +9,9 @@ inputs:
     required: false
   checks-token:
     description: "a Touchless Bot App token with checks write on the PR's repo, minted on its own so a missing Checks permission only means no check. blank: no check"
+    required: false
+  resolve-token:
+    description: "synthesize: a Touchless Bot App token with contents + pull-requests write on the PR's repo, minted on its own and used only to resolve the review threads of findings that are fixed (GitHub refuses an App token that only has contents read, and clanker-in-chief wherever it only has read access). blank: those threads stay open wherever post-token can't resolve them"
     required: false
   post-token:
     description: "synthesize, abandon, answer: clanker-in-chief's classic PAT (repo), so the review, its inline comments, answers and the didn't-finish reply come from that user. without it the App posts as touchless-bot[bot]"
@@ -23,7 +26,7 @@ inputs:
     description: "the GitHub login that asked for it"
     required: false
   beta-enabled:
-    description: "prepare, synthesize: `true` when the relay dispatched this run for a beta-enabled PR. Then a pass approves and the check goes green or red; anything else is a normal run that never approves and whose check is never red"
+    description: "prepare, synthesize: `true` when the relay dispatched this run for a PR in Second Look's scope. Then a pass approves and the check goes green or red; anything else is a normal run that never approves and whose check is never red"
     required: false
   head-sha:
     description: "synthesize: the commit prepare bundled, so both look at the same one"
@@ -47,7 +50,7 @@ inputs:
     description: "prepare: how long to wait for the head commit's preview deploys (default 10)"
     required: false
   dash-signin:
-    description: "prepare: `on` signs the testers in to an exo Dash preview as bot@touchless.io on beta-enabled runs (dashSignIn.ts); anything else leaves them logged out"
+    description: "prepare: `on` signs the testers in to an exo Dash preview as bot@touchless.io on runs for PRs in Second Look's scope (dashSignIn.ts); anything else leaves them logged out"
     required: false
   dash-client-id:
     description: "prepare: Second Look's read-only Auth0 client for core-api"
@@ -201,11 +204,11 @@ runs:
       run: |
         sudo -n apt-get install -y -qq --no-install-recommends bubblewrap >/dev/null 2>&1 \
           || { sudo -n apt-get update -qq >/dev/null 2>&1 && sudo -n apt-get install -y -qq --no-install-recommends bubblewrap >/dev/null 2>&1; } \
-          || echo "::warning title=Second Look (beta)::couldn't install bubblewrap; codex falls back to its bundled copy"
+          || echo "::warning title=Second Look::couldn't install bubblewrap; codex falls back to its bundled copy"
         for lift in kernel.apparmor_restrict_unprivileged_userns=0 kernel.unprivileged_userns_clone=1; do
           if sysctl -n "${lift%=*}" >/dev/null 2>&1; then
             sudo -n sysctl -w "$lift" >/dev/null 2>"$RUNNER_TEMP/sysctl.err" \
-              || echo "::warning title=Second Look (beta)::couldn't set $lift on this runner (apparmor's user-namespace restriction): $(tr '\n' ' ' < "$RUNNER_TEMP/sysctl.err")"
+              || echo "::warning title=Second Look::couldn't set $lift on this runner (apparmor's user-namespace restriction): $(tr '\n' ' ' < "$RUNNER_TEMP/sysctl.err")"
           else
             echo "${lift%=*}: not on this runner, nothing to lift"
           fi
@@ -214,7 +217,7 @@ runs:
         if refused="$(codex sandbox -- ls -A . 2>&1 >/dev/null)"; then
           echo "codex sandbox: starts"
         else
-          echo "::warning title=Second Look (beta)::codex's read-only sandbox can't start on this runner, so a Codex review can't read the repo: ${refused//$'\n'/ }"
+          echo "::warning title=Second Look::codex's read-only sandbox can't start on this runner, so a Codex review can't read the repo: ${refused//$'\n'/ }"
         fi
     - if: inputs.step == 'synthesize'
       uses: actions/download-artifact@v6
@@ -240,6 +243,7 @@ runs:
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         SECOND_LOOK_CHECKS_TOKEN: ${{ inputs.checks-token }}
+        SECOND_LOOK_RESOLVE_TOKEN: ${{ inputs.resolve-token }}
         SECOND_LOOK_POST_TOKEN: ${{ inputs.post-token }}
         SECOND_LOOK_EVENT_PATH: ${{ runner.temp }}/second-look-bundle/event.json
         SECOND_LOOK_CHECK_RUN_ID: ${{ inputs.check-run-id }}
